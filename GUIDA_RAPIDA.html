@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AlphaDesk v2 — Guida Deploy VPS</title>
+<style>
+  :root { --bg: #0f172a; --card: #1e293b; --accent: #3b82f6; --green: #22c55e; --orange: #f59e0b; --text: #e2e8f0; --muted: #94a3b8; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; padding: 2rem; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+  h2 { font-size: 1.3rem; margin: 2rem 0 1rem; color: var(--accent); }
+  .subtitle { color: var(--muted); margin-bottom: 2rem; }
+  .step { background: var(--card); border-radius: 12px; padding: 1.5rem; margin: 1rem 0; border-left: 4px solid var(--accent); }
+  .step.done { border-left-color: var(--green); }
+  .step h3 { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+  .step-num { background: var(--accent); color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 700; flex-shrink: 0; }
+  .step.done .step-num { background: var(--green); }
+  pre { background: #0c1222; border-radius: 8px; padding: 1rem; overflow-x: auto; font-size: 0.9rem; margin: 0.75rem 0; position: relative; }
+  code { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+  .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: var(--accent); color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
+  .copy-btn:hover { background: #2563eb; }
+  .warning { background: #451a03; border: 1px solid var(--orange); border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+  .warning::before { content: "⚠️ "; }
+  .success { background: #052e16; border: 1px solid var(--green); border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+  .success::before { content: "✅ "; }
+  .timeline { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1rem 0; }
+  .timeline-item { background: var(--card); border-radius: 8px; padding: 0.75rem 1rem; flex: 1; min-width: 120px; text-align: center; }
+  .timeline-item .time { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+  .timeline-item .label { font-size: 0.8rem; color: var(--muted); }
+  .check { cursor: pointer; user-select: none; }
+  .check input { margin-right: 0.5rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>AlphaDesk v2 — Deploy sul VPS</h1>
+<p class="subtitle">Self-Learning Ensemble Edition • 3 step, ~15 minuti</p>
+
+<div class="timeline">
+  <div class="timeline-item"><div class="time">5'</div><div class="label">Setup VPS</div></div>
+  <div class="timeline-item"><div class="time">3'</div><div class="label">Upload files</div></div>
+  <div class="timeline-item"><div class="time">2'</div><div class="label">Configura .env</div></div>
+  <div class="timeline-item"><div class="time">1'</div><div class="label">Avvia!</div></div>
+</div>
+
+<!-- STEP 1 -->
+<h2>Fase 1 — Configura SSH dal tuo Mac</h2>
+
+<div class="step">
+  <h3><span class="step-num">1</span> Genera una chiave SSH (se non ne hai una)</h3>
+  <p>Apri il Terminale sul tuo Mac e digita:</p>
+  <pre><code>ls ~/.ssh/id_ed25519.pub 2>/dev/null || ssh-keygen -t ed25519 -C "ludovicocapuano@gmail.com"</code></pre>
+  <p style="color: var(--muted); margin-top: 0.5rem;">Premi Enter a tutte le domande (password vuota va bene per ora).</p>
+</div>
+
+<div class="step">
+  <h3><span class="step-num">2</span> Copia la chiave sul VPS</h3>
+  <p>Sostituisci <code>IL_TUO_IP</code> con l'IP del VPS Hetzner:</p>
+  <pre><code>ssh-copy-id root@IL_TUO_IP</code></pre>
+  <p style="color: var(--muted); margin-top: 0.5rem;">Ti chiederà la password del VPS (la trovi nell'email di Hetzner). Dopo questo, non servirà più la password.</p>
+</div>
+
+<!-- STEP 2 -->
+<h2>Fase 2 — Setup automatico del VPS</h2>
+
+<div class="step">
+  <h3><span class="step-num">3</span> Connettiti al VPS e lancia il setup</h3>
+  <pre><code>ssh root@IL_TUO_IP</code></pre>
+  <p>Una volta dentro, incolla tutto questo (è il contenuto di <code>SETUP_VPS.sh</code>):</p>
+  <pre><code>bash &lt;(cat &lt;&lt;'SCRIPT'
+# ... il contenuto di SETUP_VPS.sh ...
+# Scaricalo dalla cartella alphadesk/ e copialo qui
+SCRIPT
+)</code></pre>
+  <p><strong>Oppure, metodo più semplice:</strong></p>
+  <pre><code># Dal tuo Mac (NON dal VPS):
+scp SETUP_VPS.sh root@IL_TUO_IP:/tmp/
+ssh root@IL_TUO_IP "chmod +x /tmp/SETUP_VPS.sh && /tmp/SETUP_VPS.sh"</code></pre>
+  <p style="color: var(--muted); margin-top: 0.5rem;">Ci vogliono ~3-5 minuti. Installa Python, PyTorch, crea l'utente, configura il firewall.</p>
+</div>
+
+<!-- STEP 3 -->
+<h2>Fase 3 — Upload dei file</h2>
+
+<div class="step">
+  <h3><span class="step-num">4</span> Carica i file Python sul VPS</h3>
+  <p>Dal tuo Mac, nella cartella <code>alphadesk/</code>:</p>
+  <pre><code>chmod +x UPLOAD_TO_VPS.sh
+./UPLOAD_TO_VPS.sh IL_TUO_IP</code></pre>
+  <p style="color: var(--muted); margin-top: 0.5rem;">Trasferisce tutti i 30+ file Python nella struttura corretta.</p>
+</div>
+
+<!-- STEP 4 -->
+<h2>Fase 4 — Configura le chiavi (UNICA COSA MANUALE)</h2>
+
+<div class="step">
+  <h3><span class="step-num">5</span> Inserisci le API key di eToro</h3>
+  <pre><code>ssh root@IL_TUO_IP
+nano /home/alphadesk/app/.env</code></pre>
+  <p>Modifica queste due righe con le tue chiavi reali:</p>
+  <pre><code>ETORO_USER_KEY=la_tua_chiave_qui
+ETORO_API_KEY=la_tua_chiave_qui</code></pre>
+  <p>Salva: <code>Ctrl+X</code> → <code>Y</code> → <code>Enter</code></p>
+
+  <div class="warning">
+    <strong>Lascia ETORO_ENV=Demo!</strong> Non cambiare in "Real" finché non hai testato per almeno 2-3 mesi.
+  </div>
+</div>
+
+<!-- STEP 5 -->
+<h2>Fase 5 — Avvia!</h2>
+
+<div class="step">
+  <h3><span class="step-num">6</span> Avvia AlphaDesk</h3>
+  <pre><code># Abilita avvio automatico al boot
+systemctl enable alphadesk
+
+# Avvia ora
+systemctl start alphadesk
+
+# Guarda i log in tempo reale
+journalctl -u alphadesk -f</code></pre>
+
+  <div class="success">
+    Se vedi <code>AlphaDesk v2 initializing (Self-Learning Ensemble)</code> nei log, è tutto funzionante!
+  </div>
+</div>
+
+<!-- COMMANDS -->
+<h2>Comandi utili</h2>
+
+<div class="step">
+  <h3>📊 Gestione quotidiana</h3>
+  <pre><code># Status
+systemctl status alphadesk
+
+# Log in tempo reale
+journalctl -u alphadesk -f
+
+# Log ultimi 30 minuti
+journalctl -u alphadesk --since "30 min ago"
+
+# Riavvia
+systemctl restart alphadesk
+
+# Ferma
+systemctl stop alphadesk
+
+# Vedi il database dei trade
+sqlite3 /home/alphadesk/app/data/alphadesk.db "SELECT * FROM trades ORDER BY open_time DESC LIMIT 10;"
+
+# Vedi i segnali
+sqlite3 /home/alphadesk/app/data/alphadesk.db "SELECT * FROM signals ORDER BY timestamp DESC LIMIT 20;"
+
+# Status del modello ML
+sqlite3 /home/alphadesk/app/data/alphadesk.db "SELECT count(*) as total, sum(case when label is not null then 1 else 0 end) as labeled FROM signals;"</code></pre>
+</div>
+
+<h2>Cosa succede dopo l'avvio</h2>
+
+<div class="step">
+  <h3>🧠 Lifecycle del ML Ensemble</h3>
+  <table style="width:100%; border-collapse: collapse;">
+    <tr style="border-bottom: 1px solid #334155;">
+      <td style="padding: 0.5rem;"><strong>Settimana 1-2</strong></td>
+      <td style="padding: 0.5rem;">Cold Start — le 4 strategie base generano segnali, il sistema raccoglie dati per l'ML</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #334155;">
+      <td style="padding: 0.5rem;"><strong>~200 segnali</strong></td>
+      <td style="padding: 0.5rem;">Primo training ML automatico alle 03:15 UTC. Riceverai un report Telegram.</td>
+    </tr>
+    <tr style="border-bottom: 1px solid #334155;">
+      <td style="padding: 0.5rem;"><strong>Settimana 3+</strong></td>
+      <td style="padding: 0.5rem;">ML attivo: filtra trade con P(profit) &lt; 30%, aggiusta confidence. Retrain giornaliero.</td>
+    </tr>
+    <tr>
+      <td style="padding: 0.5rem;"><strong>Mese 2+</strong></td>
+      <td style="padding: 0.5rem;">Il modello evolve: shadow model compete con produzione, drift monitoring attivo.</td>
+    </tr>
+  </table>
+</div>
+
+<div style="margin-top: 3rem; padding: 1.5rem; background: var(--card); border-radius: 12px; text-align: center;">
+  <p style="color: var(--muted); font-size: 0.9rem;">
+    AlphaDesk v2 — Built with Claude<br>
+    Regime Detection • Outcome Labeling • PyTorch Ensemble • Daily Retrain<br>
+    <span style="color: var(--orange);">⚠️ Il trading comporta rischi. Non investire più di quanto puoi permetterti di perdere.</span>
+  </p>
+</div>
+
+<script>
+// Copy buttons
+document.querySelectorAll('pre').forEach(pre => {
+  const btn = document.createElement('button');
+  btn.className = 'copy-btn';
+  btn.textContent = 'Copia';
+  btn.onclick = () => {
+    navigator.clipboard.writeText(pre.textContent.replace('Copia','').trim());
+    btn.textContent = '✓';
+    setTimeout(() => btn.textContent = 'Copia', 1500);
+  };
+  pre.style.position = 'relative';
+  pre.appendChild(btn);
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlphaDesk — Market Briefing 6 Marzo 2026</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; line-height: 1.7; padding: 32px 24px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { font-size: 28px; color: #f8fafc; margin-bottom: 4px; }
+        .date { color: #94a3b8; font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 20px; color: #60a5fa; margin: 32px 0 16px; border-bottom: 1px solid #1e293b; padding-bottom: 8px; }
+        h3 { font-size: 16px; color: #f1f5f9; margin: 20px 0 8px; }
+
+        .regime-box { background: #1e293b; border-radius: 12px; padding: 24px; margin: 16px 0; border-left: 4px solid #f59e0b; }
+        .regime-title { font-size: 18px; font-weight: 700; color: #fbbf24; margin-bottom: 8px; }
+
+        .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
+        .metric { background: #1e293b; border-radius: 8px; padding: 16px; text-align: center; }
+        .metric .value { font-size: 22px; font-weight: 700; margin: 4px 0; }
+        .metric .label { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+        .green { color: #34d399; }
+        .red { color: #f87171; }
+        .yellow { color: #fbbf24; }
+        .blue { color: #60a5fa; }
+
+        .signal { background: #1e293b; border-radius: 8px; padding: 16px; margin: 8px 0; display: flex; align-items: center; gap: 16px; }
+        .signal-icon { font-size: 24px; }
+        .signal-text { flex: 1; }
+        .signal-title { font-weight: 600; font-size: 15px; }
+        .signal-desc { color: #94a3b8; font-size: 13px; margin-top: 2px; }
+
+        .strategy-card { background: #1e293b; border-radius: 12px; padding: 20px; margin: 12px 0; }
+        .strategy-name { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+        .gauge { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+        .gauge-bar { flex: 1; height: 8px; background: #334155; border-radius: 4px; overflow: hidden; }
+        .gauge-fill { height: 100%; border-radius: 4px; }
+        .gauge-label { font-size: 12px; color: #94a3b8; width: 100px; }
+        .gauge-value { font-size: 12px; width: 40px; text-align: right; }
+
+        table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+        th { text-align: left; padding: 8px; border-bottom: 2px solid #334155; color: #94a3b8; font-size: 11px; text-transform: uppercase; }
+        td { padding: 8px; border-bottom: 1px solid #1e293b; font-size: 14px; }
+
+        .disclaimer { background: #1c1917; border: 1px solid #44403c; border-radius: 8px; padding: 16px; margin-top: 32px; font-size: 12px; color: #78716c; }
+        p { margin-bottom: 12px; color: #cbd5e1; font-size: 15px; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+<h1>Market Briefing & Strategy Calibration</h1>
+<div class="date">6 Marzo 2026 — AlphaDesk Research Desk</div>
+
+<!-- REGIME -->
+<div class="regime-box">
+    <div class="regime-title">REGIME DI MERCATO: RISK-OFF TRANSITORIO</div>
+    <p style="margin:0; color:#fde68a">
+        Volatilità in aumento (VIX a 23.5), guerra commerciale attiva con tariffe universali al 15%,
+        rotazione settoriale in corso da tech verso energy/industrials/difensivi.
+        Fed in pausa a 3.50-3.75%. Non è un bear market, ma non è più il rally facile del 2024-2025.
+    </p>
+</div>
+
+<!-- KPI MACRO -->
+<div class="metric-grid">
+    <div class="metric">
+        <div class="label">Fed Funds Rate</div>
+        <div class="value blue">3.50-3.75%</div>
+        <div class="label">Invariato, pausa</div>
+    </div>
+    <div class="metric">
+        <div class="label">VIX</div>
+        <div class="value yellow">23.5</div>
+        <div class="label">+12% ultima settimana</div>
+    </div>
+    <div class="metric">
+        <div class="label">S&P 500</div>
+        <div class="value red">5,740</div>
+        <div class="label">-2% ultima settimana</div>
+    </div>
+    <div class="metric">
+        <div class="label">ECB Rate</div>
+        <div class="value blue">2.00%</div>
+        <div class="label">In pausa</div>
+    </div>
+    <div class="metric">
+        <div class="label">BoE Rate</div>
+        <div class="value blue">3.75%</div>
+        <div class="label">1 taglio atteso 2026</div>
+    </div>
+    <div class="metric">
+        <div class="label">BoJ Rate</div>
+        <div class="value green">0.75%</div>
+        <div class="label">2 rialzi attesi</div>
+    </div>
+    <div class="metric">
+        <div class="label">Tariffe US</div>
+        <div class="value red">15%</div>
+        <div class="label">Universali, 150 giorni</div>
+    </div>
+    <div class="metric">
+        <div class="label">EPS S&P 500</div>
+        <div class="value green">+12%</div>
+        <div class="label">Crescita attesa 2026</div>
+    </div>
+</div>
+
+<!-- ANALISI DETTAGLIATA -->
+<h2>Cosa Sta Succedendo</h2>
+
+<p>Siamo in un mercato a due velocità. Da un lato l'economia US è resiliente (EPS in crescita del 12%, disoccupazione contenuta), dall'altro le tariffe universali al 15% imposte via Section 122 stanno creando incertezza, e la Corte Suprema ha dichiarato incostituzionale l'uso dell'IEEPA per tariffe non d'emergenza — creando un vuoto legale che potrebbe cambiare tutto entro 150 giorni.</p>
+
+<p>La rotazione settoriale è il fatto dominante: il Russell 2000 ha sovraperformato il Nasdaq del 9% nell'ultimo mese. Gli investitori stanno uscendo da tech/AI (che ha guidato il rally 2023-2025) e comprando energy (+22% YTD, grazie al petrolio +12%), industrials (+16% YTD, trainati da Caterpillar +32%), e consumer defensive (Walmart, Costco). Steel e acciaio USA beneficiano delle tariffe al 50%.</p>
+
+<p>Sul forex, il dollaro è forte ma vulnerabile. Il differenziale di tasso US-EU (3.625% vs 2.00% = +1.625%) supporta il dollaro nel breve, ma diversi analisti (Goldman a 1.25, MUFG a 1.24) prevedono un EUR/USD significativamente più alto entro fine anno su aspettativa di convergenza dei tassi. La sterlina è sotto pressione con BoE dovish. Il yen è la valuta con più momentum rialzista grazie ai rialzi BoJ attesi.</p>
+
+<h2>Impatto su Ogni Strategia AlphaDesk</h2>
+
+<!-- MOMENTUM -->
+<div class="strategy-card">
+    <div class="strategy-name green">MOMENTUM — Condizioni: FAVOREVOLI (con aggiustamenti)</div>
+    <div class="gauge">
+        <div class="gauge-label">Opportunità</div>
+        <div class="gauge-bar"><div class="gauge-fill" style="width:75%; background:#34d399"></div></div>
+        <div class="gauge-value green">75%</div>
+    </div>
+    <div class="gauge">
+        <div class="gauge-label">Rischio</div>
+        <div class="gauge-bar"><div class="gauge-fill" style="width:60%; background:#fbbf24"></div></div>
+        <div class="gauge-value yellow">60%</div>
+    </div>
+    <p>La rotazione settoriale crea trend nuovi e chiari. Energy e Industrials hanno momentum forte e sostenuto. Il problema è che il VIX a 23+ significa breakout falsi più frequenti.</p>
+    <p><strong>Calibrazione consigliata:</strong></p>
+    <ul style="padding-left:20px; color:#94a3b8; font-size:14px">
+        <li>Spostare l'universo verso Energy (XOM, CVX), Industrials (CAT), Consumer Defensive (WMT, COST)</li>
+        <li>Ridurre peso su Tech pura (in rotazione negativa)</li>
+        <li>Alzare <code>volume_threshold</code> a 2.0 (filtrare falsi breakout in alta volatilità)</li>
+        <li>Allargare <code>atr_multiplier</code> a 2.5 (stop loss più larghi per regime volatile)</li>
+    </ul>
+</div>
+
+<!-- MEAN REVERSION -->
+<div class="strategy-card">
+    <div class="strategy-name green">MEAN REVERSION — Condizioni: OTTIME</div>
+    <div class="gauge">
+        <div class="gauge-label">Opportunità</div>
+        <div class="gauge-bar"><div class="gauge-fill" style="width:85%; background:#34d399"></div></div>
+        <div class="gauge-value green">85%</div>
+    </div>
+    <div class="gauge">
+        <div class="gauge-label">Rischio</div>
+        <div class="gauge-bar"><div class="gauge-fill" style="width:40%; background:#34d399"></div></div>
+        <div class="gauge-value green">40%</div>
+    </div>
+    <p>Volatilità elevata + rotazione = molti titoli tech in oversold temporaneo. Le aziende che hanno perso il 10-15% per rotazione (non per fondamentali deteriorati) sono candidati ideali per mean reversion.</p>
+    <p><strong>Calibrazione consigliata:</strong></p>
+    <ul style="padding-left:20px; color:#94a3b8; font-size:14px">
+        <li>Questa è probabilmente la strategia da sovrappesare oggi (da 20% → 30%)</li>
+        <li>Focus su tech quality names in oversold: META, GOOGL, MSFT se Z-score &lt; -2</li>
+        <li>Abbassare <code>z_entry_long</code> a -1.8 per catturare più opportunità</li>
+        <li>Mantenere holding period corto (1-5 giorni) per catturare il rimbalzo</li>
+    </ul>
+</div>
+
+<!-- FACTOR MODEL -->
+<div class="strategy-card">
+    <div class="strategy-name yellow">FACTOR MODEL — Condizioni: MISTE</div>
+    <div class="gauge">
+        <div class="gauge-label">Opportunità</div>
+        <div class="gauge-bar"><div class="gauge-fill" style="width:55%; background:#fbbf24"></div></div>
+        <div class="gauge-value yellow">55%</div>
+    </div>
+    <div class="gauge">
+        <div class="gauge-label">Rischio</div>
+        <div class="gauge-bar"><div class="gauge-fill" style="width:50%; background:#fbbf24"></div></div>
+        <div class="gauge-value yellow">50%</div>
+    </div>
+    <p>Il fattore Value è in revival (rotazione da growth a value). Il fattore Momentum è confuso dalla rotazione settoriale. Quality regge bene in regime di incertezza.</p>
+    <p><strong>Calibrazione consigliata:</strong></p>
+    <ul style="padding-left:20px; color:#94a3b8; font-size:14px">
+        <li>Aumentare il peso del fattore Quality (da 0.30 → 0.40) — aziende solide resistono meglio</li>
+        <li>Ridurre il peso del fattore Momentum (da 0.35 → 0.25) — il momentum settoriale sta ruotando</li>
+        <li>Mantenere Value a 0.35 — la rotazione verso value è un tailwind</li>
+        <li>Filtrare per aziende con bassa esposizione a importazioni (tariffe)</li>
+    </ul>
+</div>
+
+<!-- FX CARRY -->
+<div class="strategy-card">
+    <div class="strategy-name yellow">FX CARRY — Condizioni: INTERESSANTI ma COMPLESSE</div>
+    <div class="gauge">
+        <div class="gauge-label">Opportunità</div>
+        <div class="gauge-bar"><div class="gauge-fill" style="width:65%; background:#fbbf24"></div></div>
+        <div class="gauge-value yellow">65%</div>
+    </div>
+    <div class="gauge">
+        <div class="gauge-label">Rischio</div>
+        <div class="gauge-bar"><div class="gauge-fill" style="width:55%; background:#fbbf24"></div></div>
+        <div class="gauge-value yellow">55%</div>
+    </div>
+    <p>I differenziali di tasso sono chiari ma in fase di convergenza. Il carry USD è ancora positivo ma si sta riducendo. Lo yen è la storia più interessante: BoJ sta alzando i tassi, lo yen potrebbe rafforzarsi significativamente.</p>
+
+    <table>
+        <thead>
+            <tr><th>Coppia</th><th>Carry (diff. tasso)</th><th>Direzione carry</th><th>Trend</th><th>Segnale</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>EUR/USD</td><td>+1.63%</td><td>Short EUR / Long USD</td><td style="color:#fbbf24">Misto</td><td style="color:#fbbf24">Neutro</td></tr>
+            <tr><td>GBP/USD</td><td>+0.13%</td><td>Minimo</td><td style="color:#f87171">GBP debole</td><td style="color:#f87171">Short GBP</td></tr>
+            <tr><td>USD/JPY</td><td>+2.88%</td><td>Long USD / Short JPY</td><td style="color:#f87171">JPY in recupero</td><td style="color:#fbbf24">Conflitto carry vs trend</td></tr>
+            <tr><td>AUD/USD</td><td>~0%</td><td>Neutro</td><td style="color:#fbbf24">Misto</td><td style="color:#94a3b8">Skip</td></tr>
+        </tbody>
+    </table>
+
+    <p><strong>Calibrazione consigliata:</strong></p>
+    <ul style="padding-left:20px; color:#94a3b8; font-size:14px">
+        <li>Aggiornare i tassi in <code>POLICY_RATES</code> (USD: 3.625%, EUR: 2.00%, GBP: 3.75%, JPY: 0.75%)</li>
+        <li>Ridurre l'allocazione da 30% → 20% (regime di convergenza tassi riduce il carry)</li>
+        <li>Dare più peso al momentum overlay (da 0.40 → 0.55) rispetto al carry puro</li>
+        <li>Attenzione massima su USD/JPY: il carry è positivo ma il trend si sta invertendo</li>
+    </ul>
+</div>
+
+<!-- RIALLOCAZIONE SUGGERITA -->
+<h2>Riallocazione Suggerita per Regime Attuale</h2>
+
+<table>
+    <thead>
+        <tr><th>Strategia</th><th>Allocazione Originale</th><th>Allocazione Suggerita</th><th>Rationale</th></tr>
+    </thead>
+    <tbody>
+        <tr><td>Momentum</td><td>30%</td><td style="color:#fbbf24">25%</td><td>Ridotta per alta volatilità, focus su energy/industrials</td></tr>
+        <tr><td>Mean Reversion</td><td>20%</td><td style="color:#34d399">30%</td><td>Aumentata — regime ideale per MR con rotazione e oversold</td></tr>
+        <tr><td>Factor Model</td><td>20%</td><td>25%</td><td>Leggermente aumentata — value rotation è un tailwind</td></tr>
+        <tr><td>FX Carry</td><td>30%</td><td style="color:#f87171">20%</td><td>Ridotta — carry si sta comprimendo, regime incerto</td></tr>
+    </tbody>
+</table>
+
+<h2>Top Watchlist per le Prossime Settimane</h2>
+
+<div class="signal">
+    <div class="signal-icon">🟢</div>
+    <div class="signal-text">
+        <div class="signal-title">Energy: XOM, CVX, SLB</div>
+        <div class="signal-desc">Momentum forte, beneficiano di tariffe e petrolio in salita. Momentum strategy.</div>
+    </div>
+</div>
+<div class="signal">
+    <div class="signal-icon">🟢</div>
+    <div class="signal-text">
+        <div class="signal-title">Industrials: CAT, DE, GE</div>
+        <div class="signal-desc">Reshoring USA + data center buildout. Momentum strategy.</div>
+    </div>
+</div>
+<div class="signal">
+    <div class="signal-icon">🟡</div>
+    <div class="signal-text">
+        <div class="signal-title">Tech in oversold: META, GOOGL, MSFT</div>
+        <div class="signal-desc">Se Z-score < -2, candidati mean reversion. Fondamentali intatti.</div>
+    </div>
+</div>
+<div class="signal">
+    <div class="signal-icon">🟡</div>
+    <div class="signal-text">
+        <div class="signal-title">Steel USA: X, NUE</div>
+        <div class="signal-desc">Beneficiari diretti tariffe 50%. Alto rischio se tariffe vengono rimosse.</div>
+    </div>
+</div>
+<div class="signal">
+    <div class="signal-icon">🔴</div>
+    <div class="signal-text">
+        <div class="signal-title">Evitare: Multinazionali con alta esposizione import</div>
+        <div class="signal-desc">Nike, Apple manufacturing — esposte a tariffe. Momentum negativo.</div>
+    </div>
+</div>
+
+<div class="disclaimer">
+    <strong>DISCLAIMER IMPORTANTE:</strong> Questo briefing è un'analisi informativa basata su dati pubblici,
+    NON è una raccomandazione di investimento. I mercati finanziari comportano rischio di perdita del capitale.
+    Le performance passate non garantiscono risultati futuri. Consulta un consulente finanziario autorizzato
+    prima di prendere decisioni di investimento. Testa sempre in ambiente Demo prima di usare capitale reale.
+</div>
+
+</div>
+</body>
+</html>

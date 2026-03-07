@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlphaDesk — Guida Deploy VPS + Claude Code</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; line-height: 1.7; }
+
+        .container { max-width: 820px; margin: 0 auto; padding: 32px 24px; }
+
+        h1 { font-size: 32px; color: #f8fafc; margin-bottom: 8px; }
+        .subtitle { color: #94a3b8; font-size: 15px; margin-bottom: 40px; }
+
+        .phase { margin-bottom: 48px; }
+        .phase-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; cursor: pointer; }
+        .phase-number { background: #3b82f6; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; flex-shrink: 0; }
+        .phase-title { font-size: 22px; color: #f8fafc; font-weight: 600; }
+
+        .step { background: #1e293b; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; border-left: 3px solid #334155; }
+        .step.done { border-left-color: #22c55e; opacity: 0.7; }
+        .step-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+        .step-check { width: 22px; height: 22px; border: 2px solid #475569; border-radius: 6px; cursor: pointer; flex-shrink: 0; margin-top: 2px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
+        .step-check.checked { background: #22c55e; border-color: #22c55e; }
+        .step-check.checked::after { content: '✓'; color: white; font-size: 14px; font-weight: 700; }
+        .step-title { font-size: 16px; font-weight: 600; color: #f1f5f9; }
+        .step-desc { color: #94a3b8; font-size: 14px; margin-bottom: 12px; padding-left: 34px; }
+
+        .cmd { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 14px 16px; margin: 8px 0 8px 34px; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 13px; color: #a5f3fc; position: relative; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+        .cmd .comment { color: #64748b; }
+        .cmd-copy { position: absolute; top: 8px; right: 8px; background: #334155; border: none; color: #94a3b8; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+        .cmd-copy:hover { background: #475569; color: #e2e8f0; }
+        .cmd-copy:active { background: #22c55e; color: white; }
+
+        .warning { background: #422006; border: 1px solid #92400e; border-radius: 8px; padding: 14px 16px; margin: 12px 0 12px 34px; font-size: 14px; color: #fbbf24; }
+        .warning::before { content: '⚠️ '; }
+
+        .info { background: #0c1a3d; border: 1px solid #1e40af; border-radius: 8px; padding: 14px 16px; margin: 12px 0 12px 34px; font-size: 14px; color: #93c5fd; }
+        .info::before { content: '💡 '; }
+
+        .success { background: #052e16; border: 1px solid #166534; border-radius: 8px; padding: 14px 16px; margin: 12px 0 12px 34px; font-size: 14px; color: #86efac; }
+        .success::before { content: '✅ '; }
+
+        .progress-bar { background: #1e293b; border-radius: 8px; padding: 16px 20px; margin-bottom: 32px; position: sticky; top: 0; z-index: 10; border: 1px solid #334155; }
+        .progress-bar-inner { background: #334155; border-radius: 4px; height: 8px; overflow: hidden; }
+        .progress-bar-fill { background: linear-gradient(90deg, #3b82f6, #22c55e); height: 100%; width: 0%; transition: width 0.3s; border-radius: 4px; }
+        .progress-text { display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: #94a3b8; }
+
+        .divider { border: none; border-top: 1px solid #1e293b; margin: 40px 0; }
+
+        .footer { text-align: center; color: #475569; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #1e293b; }
+
+        @media (max-width: 600px) { .container { padding: 16px; } .cmd { font-size: 12px; } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>AlphaDesk — Deploy Guide</h1>
+    <div class="subtitle">VPS Hetzner (Ubuntu) + Claude Code + Trading System H24</div>
+
+    <div class="progress-bar">
+        <div class="progress-bar-inner"><div class="progress-bar-fill" id="progressFill"></div></div>
+        <div class="progress-text">
+            <span id="progressText">0 / 20 completati</span>
+            <span id="progressPct">0%</span>
+        </div>
+    </div>
+
+    <!-- ═══════════════ FASE 1 ═══════════════ -->
+    <div class="phase">
+        <div class="phase-header">
+            <div class="phase-number">1</div>
+            <div class="phase-title">Configurare l'accesso SSH al VPS Hetzner</div>
+        </div>
+
+        <div class="step" data-step="1">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Genera una chiave SSH sul tuo Mac/PC</div>
+            </div>
+            <div class="step-desc">Apri il terminale sul tuo computer locale (non il VPS) e genera una coppia di chiavi SSH.</div>
+            <div class="cmd"><span class="comment"># Sul tuo computer locale (Mac/Linux)</span>
+ssh-keygen -t ed25519 -C "ludovicocapuano@gmail.com"<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="info">Premi Enter per accettare il percorso default (~/.ssh/id_ed25519). Inserisci una passphrase per sicurezza extra, oppure premi Enter per saltarla.</div>
+        </div>
+
+        <div class="step" data-step="2">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Aggiungi la chiave SSH al progetto Hetzner</div>
+            </div>
+            <div class="step-desc">Copia la chiave pubblica e aggiungila su Hetzner Cloud.</div>
+            <div class="cmd"><span class="comment"># Copia la chiave pubblica</span>
+cat ~/.ssh/id_ed25519.pub<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="step-desc">Vai su <strong>cloud.hetzner.com → Security → SSH Keys → Add SSH Key</strong>. Incolla il contenuto e dai un nome alla chiave.</div>
+        </div>
+
+        <div class="step" data-step="3">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Crea il server (se non l'hai già fatto)</div>
+            </div>
+            <div class="step-desc">Su Hetzner Cloud → Servers → Create Server.</div>
+            <div class="info"><strong>Configurazione consigliata per AlphaDesk:</strong><br>
+• Location: Falkenstein o Helsinki (bassa latenza verso mercati EU)<br>
+• Image: Ubuntu 24.04<br>
+• Type: CX22 (2 vCPU, 4GB RAM) — abbondante per il bot, ~€4/mese<br>
+• SSH Key: seleziona quella appena aggiunta<br>
+• Networking: IPv4 (serve per API esterne)</div>
+        </div>
+
+        <div class="step" data-step="4">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Collegati via SSH</div>
+            </div>
+            <div class="step-desc">Dopo la creazione, Hetzner ti mostra l'IP del server. Collegati:</div>
+            <div class="cmd"><span class="comment"># Sostituisci con il tuo IP</span>
+ssh root@TUO_IP_SERVER<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="step-desc">Se è la prima volta, conferma con <strong>yes</strong> quando chiede la fingerprint.</div>
+        </div>
+
+        <div class="step" data-step="5">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Crea un utente dedicato (non usare root)</div>
+            </div>
+            <div class="step-desc">Per sicurezza, crea un utente separato per il bot:</div>
+            <div class="cmd"><span class="comment"># Ancora connesso come root</span>
+adduser alphadesk
+usermod -aG sudo alphadesk
+
+<span class="comment"># Copia la chiave SSH per il nuovo utente</span>
+mkdir -p /home/alphadesk/.ssh
+cp ~/.ssh/authorized_keys /home/alphadesk/.ssh/
+chown -R alphadesk:alphadesk /home/alphadesk/.ssh
+chmod 700 /home/alphadesk/.ssh
+chmod 600 /home/alphadesk/.ssh/authorized_keys<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="warning">Da ora in poi, connettiti sempre come <code>ssh alphadesk@TUO_IP</code>, non come root.</div>
+        </div>
+
+        <div class="step" data-step="6">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Configura il firewall base</div>
+            </div>
+            <div class="cmd"><span class="comment"># Connesso come alphadesk</span>
+sudo ufw allow OpenSSH
+sudo ufw enable
+sudo ufw status<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+        </div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- ═══════════════ FASE 2 ═══════════════ -->
+    <div class="phase">
+        <div class="phase-header">
+            <div class="phase-number">2</div>
+            <div class="phase-title">Installare l'ambiente e le dipendenze</div>
+        </div>
+
+        <div class="step" data-step="7">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Aggiorna il sistema e installa i prerequisiti</div>
+            </div>
+            <div class="cmd">sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3 python3-pip python3-venv git curl unzip htop<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+        </div>
+
+        <div class="step" data-step="8">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Installa Node.js 22 (serve per Claude Code)</div>
+            </div>
+            <div class="cmd"><span class="comment"># Installa Node.js 22 LTS via NodeSource</span>
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+
+<span class="comment"># Verifica</span>
+node --version  <span class="comment"># deve essere v22.x.x</span>
+npm --version<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+        </div>
+
+        <div class="step" data-step="9">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Carica il progetto AlphaDesk sul VPS</div>
+            </div>
+            <div class="step-desc">Dal tuo computer locale, carica la cartella alphadesk:</div>
+            <div class="cmd"><span class="comment"># Dal tuo computer locale (NON dal VPS)</span>
+scp -r ./alphadesk alphadesk@TUO_IP:~/alphadesk<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="info">Alternativa: puoi mettere il progetto su un repo Git privato e fare <code>git clone</code> dal VPS.</div>
+        </div>
+
+        <div class="step" data-step="10">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Crea l'ambiente Python e installa le dipendenze</div>
+            </div>
+            <div class="cmd"><span class="comment"># Sul VPS, connesso come alphadesk</span>
+cd ~/alphadesk
+python3 -m venv venv
+source venv/bin/activate
+
+pip install --upgrade pip
+pip install -r requirements.txt
+
+<span class="comment"># Verifica che funzioni</span>
+python -c "import httpx, numpy, pandas, apscheduler; print('Tutte le dipendenze OK')"<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+        </div>
+
+        <div class="step" data-step="11">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Configura le credenziali (.env)</div>
+            </div>
+            <div class="cmd"><span class="comment"># Crea il file .env</span>
+cd ~/alphadesk
+nano .env<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="step-desc">Incolla questo contenuto, sostituendo i valori:</div>
+            <div class="cmd"><span class="comment"># eToro API</span>
+ETORO_USER_KEY=la_tua_user_key_qui
+ETORO_API_KEY=la_tua_api_key_qui
+ETORO_ENV=Demo
+
+<span class="comment"># Telegram (opzionale ma consigliato)</span>
+TELEGRAM_BOT_TOKEN=il_tuo_bot_token
+TELEGRAM_CHAT_ID=il_tuo_chat_id<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="step-desc">Salva con <strong>Ctrl+O → Enter → Ctrl+X</strong></div>
+            <div class="warning">Non condividere mai il file .env. Proteggi i permessi:</div>
+            <div class="cmd">chmod 600 .env<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+        </div>
+
+        <div class="step" data-step="12">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Test: esegui il bot una volta manualmente</div>
+            </div>
+            <div class="cmd">cd ~/alphadesk
+source venv/bin/activate
+set -a && source .env && set +a
+
+<span class="comment"># Test singolo ciclo</span>
+python main.py<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="success">Se vedi "AlphaDesk initializing..." e non ci sono errori fatali, il sistema funziona.</div>
+        </div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- ═══════════════ FASE 3 ═══════════════ -->
+    <div class="phase">
+        <div class="phase-header">
+            <div class="phase-number">3</div>
+            <div class="phase-title">Installare Claude Code sul VPS</div>
+        </div>
+
+        <div class="step" data-step="13">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Installa Claude Code</div>
+            </div>
+            <div class="step-desc">Usa l'installer nativo di Anthropic (raccomandato, non serve npm):</div>
+            <div class="cmd"><span class="comment"># Installer nativo (metodo raccomandato)</span>
+curl -fsSL https://claude.ai/install.sh | bash
+
+<span class="comment"># Verifica</span>
+claude --version<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="info">Se l'installer nativo non funziona, usa il metodo npm come fallback: <code>npm install -g @anthropic-ai/claude-code</code></div>
+        </div>
+
+        <div class="step" data-step="14">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Autenticazione Claude Code</div>
+            </div>
+            <div class="step-desc">Dato che il VPS non ha browser, usa l'autenticazione via API key:</div>
+            <div class="cmd"><span class="comment"># Opzione A: API Key Anthropic (consigliata per VPS)</span>
+export ANTHROPIC_API_KEY=la_tua_api_key_anthropic
+echo 'export ANTHROPIC_API_KEY=la_tua_api_key_anthropic' >> ~/.bashrc
+
+<span class="comment"># Avvia Claude Code nella cartella del progetto</span>
+cd ~/alphadesk
+claude<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="info">Per ottenere l'API key Anthropic, vai su <strong>console.anthropic.com → API Keys</strong>. Claude Code la usa per funzionare senza browser.</div>
+
+            <div class="step-desc">Alternativa — login headless (se hai un account Claude Pro/Team):</div>
+            <div class="cmd"><span class="comment"># Opzione B: OAuth headless</span>
+claude login
+
+<span class="comment"># Ti darà un URL da aprire nel browser del tuo PC</span>
+<span class="comment"># Apri l'URL, autorizza, copia il codice che appare</span>
+<span class="comment"># e incollalo nel terminale del VPS</span><button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+        </div>
+
+        <div class="step" data-step="15">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Test: usa Claude Code sul progetto</div>
+            </div>
+            <div class="cmd">cd ~/alphadesk
+claude
+
+<span class="comment"># Dentro Claude Code, prova:</span>
+<span class="comment"># "Analizza la struttura del progetto e dimmi se ci sono errori"</span>
+<span class="comment"># "Esegui il backtest con dati yfinance reali"</span>
+<span class="comment"># "Mostrami le posizioni aperte sull'account eToro Demo"</span><button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="success">Ora hai Claude Code che può leggere, modificare ed eseguire il tuo bot direttamente dal VPS.</div>
+        </div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- ═══════════════ FASE 4 ═══════════════ -->
+    <div class="phase">
+        <div class="phase-header">
+            <div class="phase-number">4</div>
+            <div class="phase-title">Deploy H24 con systemd</div>
+        </div>
+
+        <div class="step" data-step="16">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Crea il servizio systemd</div>
+            </div>
+            <div class="cmd">sudo nano /etc/systemd/system/alphadesk.service<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="step-desc">Incolla questo contenuto:</div>
+            <div class="cmd">[Unit]
+Description=AlphaDesk Quant Trading System
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=alphadesk
+WorkingDirectory=/home/alphadesk/alphadesk
+ExecStart=/home/alphadesk/alphadesk/venv/bin/python scheduler.py
+EnvironmentFile=/home/alphadesk/alphadesk/.env
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=alphadesk
+
+[Install]
+WantedBy=multi-user.target<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+        </div>
+
+        <div class="step" data-step="17">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Attiva e avvia il servizio</div>
+            </div>
+            <div class="cmd"><span class="comment"># Ricarica systemd</span>
+sudo systemctl daemon-reload
+
+<span class="comment"># Abilita avvio automatico al boot del server</span>
+sudo systemctl enable alphadesk
+
+<span class="comment"># Avvia il bot</span>
+sudo systemctl start alphadesk
+
+<span class="comment"># Controlla che sia attivo</span>
+sudo systemctl status alphadesk<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="success">Se vedi <strong>Active: active (running)</strong> in verde, il bot gira H24!</div>
+        </div>
+
+        <div class="step" data-step="18">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Impara i comandi di gestione del servizio</div>
+            </div>
+            <div class="cmd"><span class="comment"># Comandi che userai quotidianamente:</span>
+
+<span class="comment"># Vedere i log in tempo reale</span>
+sudo journalctl -u alphadesk -f
+
+<span class="comment"># Vedere gli ultimi 100 log</span>
+sudo journalctl -u alphadesk -n 100
+
+<span class="comment"># Riavviare il bot (dopo modifiche al codice)</span>
+sudo systemctl restart alphadesk
+
+<span class="comment"># Fermare il bot</span>
+sudo systemctl stop alphadesk
+
+<span class="comment"># Stato del bot</span>
+sudo systemctl status alphadesk
+
+<span class="comment"># Vedere i log applicativi</span>
+tail -f ~/alphadesk/logs/alphadesk.log<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+        </div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- ═══════════════ FASE 5 ═══════════════ -->
+    <div class="phase">
+        <div class="phase-header">
+            <div class="phase-number">5</div>
+            <div class="phase-title">Monitoring e manutenzione</div>
+        </div>
+
+        <div class="step" data-step="19">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Configura il Telegram Bot per le notifiche</div>
+            </div>
+            <div class="step-desc">Segui la guida in <code>deploy/TELEGRAM_SETUP.md</code> nel progetto. Una volta configurato, testa:</div>
+            <div class="cmd">cd ~/alphadesk && source venv/bin/activate
+set -a && source .env && set +a
+
+python -c "
+import asyncio
+from utils.telegram_bot import TelegramNotifier
+import os
+async def test():
+    bot = TelegramNotifier(os.getenv('TELEGRAM_BOT_TOKEN'), os.getenv('TELEGRAM_CHAT_ID'))
+    await bot.send('🟢 AlphaDesk su VPS Hetzner — Connessione OK!')
+    print('Messaggio inviato!')
+asyncio.run(test())
+"<button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+        </div>
+
+        <div class="step" data-step="20">
+            <div class="step-header">
+                <div class="step-check" onclick="toggleStep(this)"></div>
+                <div class="step-title">Workflow quotidiano con Claude Code</div>
+            </div>
+            <div class="step-desc">Ecco come usare Claude Code per gestire il bot giorno per giorno:</div>
+            <div class="cmd"><span class="comment"># Collegati al VPS</span>
+ssh alphadesk@TUO_IP
+
+<span class="comment"># Apri Claude Code nel progetto</span>
+cd ~/alphadesk && claude
+
+<span class="comment"># Ora puoi chiedere a Claude cose come:</span>
+
+<span class="comment"># "Controlla i log delle ultime 2 ore, ci sono errori?"</span>
+<span class="comment"># "Mostrami il report di performance dell'ultima settimana"</span>
+<span class="comment"># "Il momentum strategy ha win rate basso, prova ad alzare</span>
+<span class="comment">#  il volume_threshold a 2.0 e riesegui il backtest"</span>
+<span class="comment"># "Aggiungi il ticker PLTR all'universo equity"</span>
+<span class="comment"># "Esegui un backtest con i dati reali e genera il report"</span>
+<span class="comment"># "Riavvia il servizio alphadesk"</span><button class="cmd-copy" onclick="copyCmd(this)">Copia</button></div>
+            <div class="success"><strong>Questo è il vero power-up:</strong> Claude Code sul VPS ti permette di iterare, debuggare e migliorare il bot in linguaggio naturale, senza dover scrivere codice manualmente ogni volta.</div>
+        </div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- QUICK REFERENCE -->
+    <div class="phase">
+        <div class="phase-header">
+            <div class="phase-number">⚡</div>
+            <div class="phase-title">Quick Reference — Comandi Essenziali</div>
+        </div>
+
+        <div class="cmd"><span class="comment"># ══ CONNETTERSI ══</span>
+ssh alphadesk@TUO_IP
+
+<span class="comment"># ══ BOT ══</span>
+sudo systemctl start alphadesk      <span class="comment"># Avvia</span>
+sudo systemctl stop alphadesk       <span class="comment"># Ferma</span>
+sudo systemctl restart alphadesk    <span class="comment"># Riavvia</span>
+sudo systemctl status alphadesk     <span class="comment"># Stato</span>
+
+<span class="comment"># ══ LOG ══</span>
+sudo journalctl -u alphadesk -f              <span class="comment"># Log live</span>
+tail -f ~/alphadesk/logs/alphadesk.log       <span class="comment"># Log app</span>
+tail -f ~/alphadesk/logs/alphadesk_trades.log <span class="comment"># Solo trade</span>
+
+<span class="comment"># ══ CLAUDE CODE ══</span>
+cd ~/alphadesk && claude             <span class="comment"># Apri Claude</span>
+
+<span class="comment"># ══ BACKTEST ══</span>
+cd ~/alphadesk && source venv/bin/activate
+python -m backtester.run_backtest --strategy all
+
+<span class="comment"># ══ SWITCH DEMO → REAL ══</span>
+nano ~/alphadesk/.env                <span class="comment"># Cambia ETORO_ENV=Real</span>
+sudo systemctl restart alphadesk     <span class="comment"># Riavvia</span>
+
+<span class="comment"># ══ AGGIORNARE IL CODICE ══</span>
+<span class="comment"># (dopo aver modificato con Claude Code o manualmente)</span>
+sudo systemctl restart alphadesk</div>
+    </div>
+
+    <div class="footer">
+        AlphaDesk Quant Trading System — Deploy Guide v1.0<br>
+        ⚠️ Testa SEMPRE in ambiente Demo prima di passare a Real
+    </div>
+</div>
+
+<script>
+function toggleStep(el) {
+    el.classList.toggle('checked');
+    el.closest('.step').classList.toggle('done');
+    updateProgress();
+}
+
+function updateProgress() {
+    const total = document.querySelectorAll('.step-check').length;
+    const done = document.querySelectorAll('.step-check.checked').length;
+    const pct = Math.round(done / total * 100);
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressText').textContent = done + ' / ' + total + ' completati';
+    document.getElementById('progressPct').textContent = pct + '%';
+
+    // Save state
+    const states = Array.from(document.querySelectorAll('.step-check')).map(el => el.classList.contains('checked'));
+    localStorage.setItem('alphadesk_deploy', JSON.stringify(states));
+}
+
+function copyCmd(btn) {
+    const cmd = btn.parentElement;
+    const text = cmd.textContent.replace('Copia', '').replace(/# .*$/gm, '').trim();
+    navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = 'Copiato!';
+        setTimeout(() => btn.textContent = 'Copia', 1500);
+    });
+}
+
+// Restore state
+const saved = localStorage.getItem('alphadesk_deploy');
+if (saved) {
+    const states = JSON.parse(saved);
+    document.querySelectorAll('.step-check').forEach((el, i) => {
+        if (states[i]) {
+            el.classList.add('checked');
+            el.closest('.step').classList.add('done');
+        }
+    });
+    updateProgress();
+}
+</script>
+</body>
+</html>
