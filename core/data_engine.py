@@ -133,7 +133,100 @@ class DataEngine:
         # Volatility
         df["volatility_20d"] = df["close"].pct_change().rolling(20).std() * np.sqrt(252)
 
+        # Fractionally differentiated close (FFD, d=0.35)
+        # Preserves memory while being stationary — better ML features
+        if len(df) > 50:
+            ffd = DataEngine.frac_diff(df["close"], d=0.35)
+            df["close_ffd"] = ffd
+
         return df
+
+    # ────────────────────── CUSUM Filter (López de Prado) ──────────────────────
+
+    @staticmethod
+    def cusum_filter(close: pd.Series, threshold: float = None) -> pd.DatetimeIndex:
+        """
+        CUSUM event-driven sampling (Advances in Financial ML, Ch. 2).
+
+        Instead of sampling at fixed time intervals, detect structural
+        changes in the price series. Returns timestamps where cumulative
+        sum of returns breaches the threshold.
+
+        Args:
+            close: Price series with DatetimeIndex.
+            threshold: CUSUM threshold. If None, uses 1x daily std dev.
+
+        Returns:
+            DatetimeIndex of event timestamps.
+        """
+        if close.empty or len(close) < 20:
+            return pd.DatetimeIndex([])
+
+        if threshold is None:
+            threshold = close.pct_change().std()
+
+        events = []
+        s_pos, s_neg = 0.0, 0.0
+        diff = close.pct_change().dropna()
+
+        for t, val in diff.items():
+            s_pos = max(0, s_pos + val)
+            s_neg = min(0, s_neg + val)
+
+            if s_pos > threshold:
+                events.append(t)
+                s_pos = 0.0
+            elif s_neg < -threshold:
+                events.append(t)
+                s_neg = 0.0
+
+        return pd.DatetimeIndex(events)
+
+    # ────────────────────── Fractional Differentiation (López de Prado) ──────────
+
+    @staticmethod
+    def frac_diff(series: pd.Series, d: float = 0.35, threshold: float = 1e-4) -> pd.Series:
+        """
+        Fixed-width window fractional differentiation (FFD).
+
+        Preserves memory (mean-reversion signal) while achieving stationarity.
+        d≈0.35 typically preserves >95% correlation with original series
+        while passing ADF stationarity test.
+
+        Args:
+            series: Price or log-price series.
+            d: Fractional differentiation order (0 < d < 1).
+               d=0 is original series, d=1 is first difference.
+            threshold: Weight cutoff for the FFD window.
+
+        Returns:
+            Fractionally differentiated series.
+        """
+        if series.empty:
+            return series
+
+        # Compute FFD weights, cap window to half the series length
+        max_window = max(10, len(series) // 2)
+        weights = [1.0]
+        k = 1
+        while True:
+            w = -weights[-1] * (d - k + 1) / k
+            if abs(w) < threshold or k >= max_window:
+                break
+            weights.append(w)
+            k += 1
+
+        weights = np.array(weights[::-1])  # Reverse for convolution
+        width = len(weights)
+
+        # Apply weights via dot product
+        result = {}
+        for i in range(width - 1, len(series)):
+            window = series.iloc[i - width + 1: i + 1].values
+            if len(window) == width:
+                result[series.index[i]] = np.dot(weights, window)
+
+        return pd.Series(result, dtype=float)
 
     # ────────────────────── Macro Data ──────────────────────
 
@@ -196,6 +289,61 @@ class DataEngine:
         except ImportError:
             logger.warning("statsmodels not installed")
             return {"cointegrated": False, "p_value": 1.0}
+
+    # ────────────────────── Covariance Denoising (Marcenko-Pastur) ──────────────────
+
+    @staticmethod
+    def denoise_covariance(returns_df: pd.DataFrame, num_factors: int = None) -> pd.DataFrame:
+        """
+        Denoise a covariance matrix using the Marcenko-Pastur theorem
+        (López de Prado, Ch. 2).
+
+        Separates signal eigenvalues from noise eigenvalues based on
+        random matrix theory. Noise eigenvalues are shrunk to their
+        average, preserving only the signal components.
+
+        Args:
+            returns_df: DataFrame of asset returns (T x N).
+            num_factors: If None, auto-detect using Marcenko-Pastur bound.
+
+        Returns:
+            Denoised covariance matrix as DataFrame.
+        """
+        cov = returns_df.cov()
+        corr = returns_df.corr()
+        T, N = returns_df.shape
+        q = T / N  # Observations-to-variables ratio
+
+        # Eigendecomposition
+        eigenvalues, eigenvectors = np.linalg.eigh(corr.values)
+        idx = eigenvalues.argsort()[::-1]  # Sort descending
+        eigenvalues = eigenvalues[idx]
+        eigenvectors = eigenvectors[:, idx]
+
+        # Marcenko-Pastur upper bound for noise eigenvalues
+        lambda_plus = (1 + 1 / np.sqrt(q)) ** 2
+
+        if num_factors is None:
+            # Count eigenvalues above the MP noise threshold
+            num_factors = int(np.sum(eigenvalues > lambda_plus))
+            num_factors = max(1, num_factors)
+
+        # Shrink noise eigenvalues to their average
+        noise_eigenvalues = eigenvalues[num_factors:]
+        if len(noise_eigenvalues) > 0:
+            noise_avg = np.mean(noise_eigenvalues)
+            eigenvalues[num_factors:] = noise_avg
+
+        # Reconstruct denoised correlation matrix
+        denoised_corr = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
+        # Force diagonal to 1 (correlation matrix property)
+        np.fill_diagonal(denoised_corr, 1.0)
+
+        # Convert back to covariance
+        stds = np.sqrt(np.diag(cov.values))
+        denoised_cov = denoised_corr * np.outer(stds, stds)
+
+        return pd.DataFrame(denoised_cov, index=cov.index, columns=cov.columns)
 
     # ────────────────────── Cache Management ──────────────────────
 

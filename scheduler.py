@@ -11,6 +11,7 @@ v2 additions:
 
 import asyncio
 import logging
+import random
 import signal
 import sys
 
@@ -50,7 +51,7 @@ class AlphaDeskScheduler:
 
         # ── Signal Scan (every 15 min) ──
         self.scheduler.add_job(
-            self._safe_run(self.desk.run_signal_scan),
+            self._safe_run(self.desk.run_signal_scan, jitter_seconds=240),
             IntervalTrigger(minutes=config.signal_scan_interval_minutes),
             id="signal_scan",
             name="Signal Scan (v2 + ML)",
@@ -181,10 +182,14 @@ class AlphaDeskScheduler:
             "System will resume Monday."
         )
 
-    def _safe_run(self, coro_func):
-        """Wrap async functions with error handling."""
+    def _safe_run(self, coro_func, jitter_seconds: int = 0):
+        """Wrap async functions with error handling and optional jitter."""
         async def wrapper():
             try:
+                if jitter_seconds > 0:
+                    delay = random.randint(0, jitter_seconds)
+                    logger.debug(f"Applying {delay}s jitter before {coro_func.__name__}")
+                    await asyncio.sleep(delay)
                 await coro_func()
             except Exception as e:
                 logger.error(f"Scheduled job failed: {e}", exc_info=True)

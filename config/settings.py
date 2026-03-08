@@ -27,13 +27,18 @@ class RiskConfig:
     max_risk_per_trade: float = 0.05       # 5% max risk per trade
     max_correlated_exposure: float = 0.15  # 15% max in correlated positions
     max_strategy_exposure: float = 0.25    # 25% gross per strategy
-    max_drawdown_reduce: float = 0.15      # -15% → cut positions 50%
-    max_drawdown_halt: float = 0.25        # -25% → close all, pause 48h
     daily_var_limit: float = 0.03          # 3% daily VaR (95%)
     kelly_fraction: float = 0.5            # Half-Kelly
     slippage_budget_equity: float = 0.001  # 0.1%
     slippage_budget_fx: float = 0.0005     # 0.05%
     mandatory_stop_loss: bool = True
+
+    # Graduated drawdown circuit breakers
+    drawdown_level_1: float = 0.05   # -5%  → warning, tighten stops 20%
+    drawdown_level_2: float = 0.10   # -10% → 75% size, no momentum
+    drawdown_level_3: float = 0.15   # -15% → 50% positions, mean reversion only
+    drawdown_level_4: float = 0.20   # -20% → close all except hedges, halt 24h
+    drawdown_level_5: float = 0.25   # -25% → full halt 48h, manual review
 
 
 @dataclass
@@ -46,6 +51,39 @@ class StrategyAllocation:
     mean_reversion: float = 0.30  # 30% (was 20% — ranging markets favor MR)
     factor_model: float = 0.25   # 25% (was 20% — value rotation underway)
     fx_carry: float = 0.20       # 20% (was 30% — tariff uncertainty)
+
+    def get_regime_adjusted(self, vix_level: float = None, trend_regime: str = None) -> dict:
+        """Adjust allocations based on market regime.
+
+        Args:
+            vix_level: Current VIX value (drives risk-on/risk-off tilt).
+            trend_regime: Trend regime string from RegimeFingerprint
+                          (e.g. 'strong_up', 'ranging', 'strong_down').
+
+        Returns:
+            Dict with strategy name keys and float allocation values summing to 1.0.
+        """
+        if vix_level is not None and vix_level > 25:  # Risk-off
+            return {
+                'momentum': 0.10,
+                'mean_reversion': 0.40,
+                'factor_model': 0.30,
+                'fx_carry': 0.20,
+            }
+        elif vix_level is not None and vix_level < 18:  # Risk-on
+            return {
+                'momentum': 0.35,
+                'mean_reversion': 0.20,
+                'factor_model': 0.25,
+                'fx_carry': 0.20,
+            }
+        else:  # Normal — use static defaults
+            return {
+                'momentum': self.momentum,
+                'mean_reversion': self.mean_reversion,
+                'factor_model': self.factor_model,
+                'fx_carry': self.fx_carry,
+            }
 
 
 @dataclass

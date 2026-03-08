@@ -23,14 +23,16 @@ class PositionSizer:
         self.slippage_equity = slippage_equity
         self.slippage_fx = slippage_fx
 
-    def kelly_size(self, win_rate: float, avg_win: float, avg_loss: float) -> float:
+    def kelly_size(self, win_rate: float, avg_win: float, avg_loss: float,
+                   n_trades: int = 100) -> float:
         """
-        Compute Kelly fraction for position sizing.
+        Compute Kelly fraction for position sizing with sample-size shrinkage.
 
         Kelly % = W - [(1-W) / R]
         where W = win rate, R = win/loss ratio
 
-        We use half-Kelly for safety.
+        We use half-Kelly for safety and shrink further when historical
+        sample size is small (full Kelly only after 200+ trades).
         """
         if avg_loss == 0 or win_rate <= 0 or win_rate >= 1:
             return 0
@@ -38,21 +40,38 @@ class PositionSizer:
         r = avg_win / abs(avg_loss)  # Win/loss ratio
         kelly = win_rate - ((1 - win_rate) / r)
 
-        # Apply fraction and cap
-        sized = kelly * self.kelly_fraction
+        # Shrinkage: scale down when we have few trades to account for
+        # estimation uncertainty in win_rate and payoff ratio
+        shrinkage = min(1.0, n_trades / 200)
+
+        # Apply fraction, shrinkage, and cap
+        sized = kelly * self.kelly_fraction * shrinkage
         return max(0, min(self.max_risk_per_trade, sized))
 
     def atr_based_size(self, account_equity: float, entry_price: float,
                         atr: float, atr_multiplier: float = 2.0,
-                        risk_pct: float = None) -> dict:
+                        risk_pct: float = None,
+                        ewma_span: Optional[int] = None,
+                        atr_series: Optional[np.ndarray] = None) -> dict:
         """
         ATR-based position sizing.
         Determines position size so that a move of atr_multiplier * ATR
         equals the max acceptable loss.
 
+        If ewma_span is provided along with atr_series, compute an EWMA
+        of the ATR series to give more weight to recent volatility.
+
         Returns:
             dict with dollar_amount, units, risk_dollars, stop_distance
         """
+        # Optionally use EWMA-weighted conditional volatility
+        if ewma_span is not None and atr_series is not None and len(atr_series) > 1:
+            alpha = 2.0 / (ewma_span + 1)
+            ewma_val = float(atr_series[0])
+            for val in atr_series[1:]:
+                ewma_val = alpha * float(val) + (1 - alpha) * ewma_val
+            atr = ewma_val
+
         risk_pct = risk_pct or self.max_risk_per_trade
         risk_dollars = account_equity * risk_pct
         stop_distance = atr * atr_multiplier
@@ -95,6 +114,7 @@ class PositionSizer:
                 historical_performance.get("win_rate", 0.5),
                 historical_performance.get("avg_win", 0.02),
                 historical_performance.get("avg_loss", 0.01),
+                n_trades=historical_performance.get("n_trades", 100),
             )
             # Blend signal suggestion with Kelly
             base_size_pct = 0.6 * base_size_pct + 0.4 * kelly

@@ -86,9 +86,23 @@ class MomentumStrategy(BaseStrategy):
         if latest["sma_50"] <= latest["sma_200"]:
             return None
 
-        # Positive 3-month momentum
+        # Positive 3-month momentum (respects min_momentum_3m from strategy_tuner)
         if latest.get("momentum_3m", 0) < self.min_momentum_3m:
             return None
+
+        # ── 12-1 Momentum (skip most recent month to avoid reversal) ──
+        # Chan / Jegadeesh-Titman: use 12-month return minus last 1-month
+        # return, divided by trailing 60-day realized volatility.
+        ret_12m = latest.get("momentum_12m", 0)
+        ret_1m = latest.get("momentum_1m", 0)
+        raw_12_1 = ret_12m - ret_1m  # intermediate 11-month return
+
+        # 60-day annualized volatility for normalization
+        daily_rets = df["close"].pct_change()
+        vol_60d = daily_rets.rolling(60).std().iloc[-1] * np.sqrt(252)
+        vol_60d = max(vol_60d, 0.05)  # floor to avoid division by near-zero
+
+        momentum_12_1 = raw_12_1 / vol_60d  # vol-adjusted 12-1 signal
 
         # ── Breakout detection ──
         high_20 = df["high"].rolling(self.breakout_period).max().iloc[-2]  # Previous day's 20d high
@@ -116,11 +130,11 @@ class MomentumStrategy(BaseStrategy):
         # Take profit at 3x risk (aggressive)
         take_profit = entry + (3.0 * self.atr_multiplier * atr)
 
-        # Momentum composite score for ranking
+        # Momentum composite score for ranking — dominated by 12-1 signal
         momentum_score = (
-            0.4 * self._normalize(latest.get("momentum_1m", 0), -0.1, 0.2) +
-            0.3 * self._normalize(latest.get("momentum_3m", 0), -0.15, 0.3) +
-            0.3 * self._normalize(latest.get("momentum_12m", 0), -0.2, 0.5)
+            0.6 * self._normalize(momentum_12_1, -1.0, 3.0) +
+            0.25 * self._normalize(latest.get("momentum_3m", 0), -0.15, 0.3) +
+            0.15 * self._normalize(latest.get("momentum_1m", 0), -0.1, 0.2)
         )
 
         signal_type = Signal.STRONG_BUY if confidence > 0.8 and has_volume else Signal.BUY
@@ -137,6 +151,8 @@ class MomentumStrategy(BaseStrategy):
             suggested_size_pct=min(0.05, confidence * 0.06),  # Max 5% per position
             metadata={
                 "momentum_score": momentum_score,
+                "momentum_12_1": momentum_12_1,
+                "vol_60d": vol_60d,
                 "rsi": rsi,
                 "volume_ratio": volume_ratio,
                 "atr": atr,
@@ -180,8 +196,11 @@ class MomentumStrategy(BaseStrategy):
         elif vol < 0.30:
             score += 0.05
 
-        # Positive multi-timeframe momentum
-        if latest.get("momentum_1m", 0) > 0 and latest.get("momentum_3m", 0) > 0:
+        # Positive multi-timeframe momentum (12-1 style: 3m return
+        # without last month to avoid short-term reversal)
+        ret_3m = latest.get("momentum_3m", 0)
+        ret_1m = latest.get("momentum_1m", 0)
+        if (ret_3m - ret_1m) > 0 and ret_3m > 0:
             score += 0.10
 
         return min(1.0, score)

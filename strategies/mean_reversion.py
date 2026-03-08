@@ -201,15 +201,46 @@ class MeanReversionStrategy(BaseStrategy):
 
         return signals
 
+    @staticmethod
+    def _kalman_hedge_ratio(prices_a: pd.Series, prices_b: pd.Series) -> float:
+        """
+        Compute dynamic hedge ratio using a Kalman filter (Chan).
+        The hedge ratio β tracks the relationship y = β*x + ε
+        and adapts as the relationship changes over time.
+        """
+        x = prices_b.values.astype(float)
+        y = prices_a.values.astype(float)
+
+        # Kalman filter state: β (hedge ratio)
+        beta = 0.0
+        P = 1.0       # State covariance
+        R = 1e-3      # Measurement noise (small = trust observations)
+        Q = 1e-5      # Process noise (small = slow adaptation)
+
+        for i in range(len(x)):
+            # Predict
+            P_pred = P + Q
+
+            # Update
+            innovation = y[i] - beta * x[i]
+            S = x[i] ** 2 * P_pred + R
+            K = P_pred * x[i] / S  # Kalman gain
+
+            beta = beta + K * innovation
+            P = (1 - K * x[i]) * P_pred
+
+        return beta
+
     def _evaluate_pair_spread(self, sym_a: str, sym_b: str,
                                 prices_a: pd.Series, prices_b: pd.Series,
                                 universe: dict, coint_pvalue: float) -> Optional[TradeSignal]:
         """Evaluate spread Z-score for a cointegrated pair."""
-        # Calculate spread ratio
-        ratio = prices_a / prices_b
-        spread_mean = ratio.rolling(60).mean()
-        spread_std = ratio.rolling(60).std()
-        zscore = ((ratio - spread_mean) / spread_std).iloc[-1]
+        # Use Kalman filter hedge ratio instead of simple ratio
+        hedge_ratio = self._kalman_hedge_ratio(prices_a, prices_b)
+        spread = prices_a - hedge_ratio * prices_b
+        spread_mean = spread.rolling(60).mean()
+        spread_std = spread.rolling(60).std()
+        zscore = ((spread - spread_mean) / spread_std).iloc[-1]
 
         if abs(zscore) < self.pairs_z_entry:
             return None

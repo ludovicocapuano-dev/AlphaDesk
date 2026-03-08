@@ -17,6 +17,12 @@ from typing import Dict, Optional
 import numpy as np
 import pandas as pd
 
+try:
+    from hmmlearn.hmm import GaussianHMM
+    HAS_HMM = True
+except ImportError:
+    HAS_HMM = False
+
 logger = logging.getLogger("alphadesk.regime")
 
 
@@ -80,6 +86,172 @@ class RegimeFingerprint:
         )
 
 
+class HMMRegimeDetector:
+    """
+    Hidden Markov Model regime detector.
+
+    Uses a 2-state Gaussian HMM on daily returns to classify the market
+    as bull or bear. Falls back to a simple numpy-based approximation
+    when hmmlearn is not installed.
+    """
+
+    def __init__(self, n_states: int = 2, random_state: int = 42):
+        self.n_states = n_states
+        self.random_state = random_state
+        self._fitted = False
+        self._model = None
+        self._state_means = None  # mean return per state after fitting
+        self._transition_matrix = None
+
+    @property
+    def is_fitted(self) -> bool:
+        return self._fitted
+
+    def fit(self, returns: np.ndarray) -> None:
+        """
+        Fit the 2-state HMM on a 1-D array of daily returns.
+
+        Args:
+            returns: 1-D array of daily log/simple returns (length >= 30).
+        """
+        returns = np.asarray(returns, dtype=np.float64).ravel()
+        returns = returns[~np.isnan(returns)]
+
+        if len(returns) < 30:
+            logger.warning("HMM fit skipped: need >= 30 observations, got %d", len(returns))
+            return
+
+        if HAS_HMM:
+            self._fit_hmmlearn(returns)
+        else:
+            self._fit_numpy_fallback(returns)
+
+        self._fitted = True
+        logger.info(
+            "HMM fitted (%s backend): state means %s",
+            "hmmlearn" if HAS_HMM else "numpy-fallback",
+            self._state_means,
+        )
+
+    # ---------- hmmlearn backend ----------
+
+    def _fit_hmmlearn(self, returns: np.ndarray) -> None:
+        X = returns.reshape(-1, 1)
+        model = GaussianHMM(
+            n_components=self.n_states,
+            covariance_type="full",
+            n_iter=100,
+            random_state=self.random_state,
+        )
+        model.fit(X)
+        self._model = model
+        self._state_means = model.means_.ravel()
+        self._transition_matrix = model.transmat_
+
+    # ---------- numpy fallback ----------
+
+    def _fit_numpy_fallback(self, returns: np.ndarray) -> None:
+        """Simple rolling-stats approximation when hmmlearn is unavailable."""
+        window = min(20, len(returns) // 2)
+        if window < 5:
+            window = 5
+
+        roll_mean = pd.Series(returns).rolling(window, min_periods=window).mean().values
+        roll_std = pd.Series(returns).rolling(window, min_periods=window).std().values
+
+        valid = ~(np.isnan(roll_mean) | np.isnan(roll_std))
+        roll_mean = roll_mean[valid]
+        roll_std = roll_std[valid]
+
+        if len(roll_mean) == 0:
+            logger.warning("HMM numpy fallback: not enough data after rolling window")
+            return
+
+        med_mean = np.median(roll_mean)
+        med_std = np.median(roll_std)
+
+        # State assignment: 1=bull (high return, low vol), 0=bear
+        states = np.where(
+            (roll_mean >= med_mean) & (roll_std <= med_std), 1, 0
+        )
+
+        # Compute per-state mean return
+        self._state_means = np.array([
+            roll_mean[states == 0].mean() if np.any(states == 0) else -0.001,
+            roll_mean[states == 1].mean() if np.any(states == 1) else 0.001,
+        ])
+
+        # Estimate transition matrix from state sequence
+        trans = np.zeros((2, 2))
+        for i in range(len(states) - 1):
+            trans[states[i], states[i + 1]] += 1
+        row_sums = trans.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1
+        self._transition_matrix = trans / row_sums
+
+        # Store states for predict (last state)
+        self._last_fallback_returns = returns
+        self._last_fallback_states = states
+
+    # ---------- prediction ----------
+
+    def predict_regime(self, returns: np.ndarray) -> str:
+        """
+        Predict current regime from the most recent returns.
+
+        Args:
+            returns: 1-D array of recent daily returns.
+
+        Returns:
+            "bull", "bear", or "unknown" if not fitted.
+        """
+        if not self._fitted:
+            return "unknown"
+
+        returns = np.asarray(returns, dtype=np.float64).ravel()
+        returns = returns[~np.isnan(returns)]
+        if len(returns) == 0:
+            return "unknown"
+
+        if HAS_HMM and self._model is not None:
+            state = self._model.predict(returns.reshape(-1, 1))[-1]
+        else:
+            # Numpy fallback: classify the latest window
+            window = 20
+            tail = returns[-window:] if len(returns) >= window else returns
+            avg_ret = np.mean(tail)
+            avg_vol = np.std(tail)
+            med_mean = np.mean(self._state_means)
+            # Simple threshold: above mean-of-means → bull
+            state = 1 if avg_ret >= med_mean else 0
+
+        # Map state to label: higher-mean state = bull
+        bull_state = int(np.argmax(self._state_means))
+        return "bull" if state == bull_state else "bear"
+
+    def get_transition_probs(self) -> dict:
+        """
+        Return the transition matrix as a dict.
+
+        Returns:
+            {"bear_to_bear": float, "bear_to_bull": float,
+             "bull_to_bear": float, "bull_to_bull": float}
+            or empty dict if not fitted.
+        """
+        if not self._fitted or self._transition_matrix is None:
+            return {}
+
+        bull = int(np.argmax(self._state_means))
+        bear = 1 - bull
+        tm = self._transition_matrix
+        return {
+            "bear_to_bear": float(tm[bear, bear]),
+            "bear_to_bull": float(tm[bear, bull]),
+            "bull_to_bear": float(tm[bull, bear]),
+            "bull_to_bull": float(tm[bull, bull]),
+        }
+
+
 class RegimeDetector:
     """
     Detects current market regime from price data and macro indicators.
@@ -89,6 +261,9 @@ class RegimeDetector:
     2. Attached to every signal/trade for ML learning
     3. Used to filter strategies dynamically
     """
+
+    def __init__(self):
+        self.hmm = HMMRegimeDetector()
 
     # Volatility thresholds (annualized, based on VIX-equivalent)
     VOL_THRESHOLDS = {
@@ -116,6 +291,24 @@ class RegimeDetector:
         Returns:
             RegimeFingerprint
         """
+        # HMM regime (uses pre-fitted model; default "unknown")
+        hmm_regime = "unknown"
+        if self.hmm.is_fitted:
+            try:
+                # Build returns from market_data for prediction
+                all_returns = []
+                for symbol, df in market_data.items():
+                    if not df.empty and len(df) > 1:
+                        rets = df["close"].pct_change().dropna().values
+                        all_returns.append(rets)
+                if all_returns:
+                    min_len = min(len(r) for r in all_returns)
+                    stacked = np.column_stack([r[-min_len:] for r in all_returns])
+                    portfolio_returns = stacked.mean(axis=1)
+                    hmm_regime = self.hmm.predict_regime(portfolio_returns)
+            except Exception as e:
+                logger.warning("HMM prediction failed: %s", e)
+
         regime = {
             "timestamp": datetime.utcnow().isoformat(),
             "volatility_regime": self._detect_volatility(market_data, vix),
@@ -123,11 +316,43 @@ class RegimeDetector:
             "liquidity_regime": self._detect_liquidity(market_data),
             "rate_regime": self._detect_rate_regime(macro_indicators),
             "correlation_regime": self._detect_correlation(market_data),
+            "hmm_regime": hmm_regime,
         }
 
         fingerprint = RegimeFingerprint(regime)
         logger.info(f"Regime detected: {fingerprint}")
         return fingerprint
+
+    def fit_hmm(self, market_data: Dict[str, pd.DataFrame]) -> None:
+        """
+        Fit the HMM on equal-weighted portfolio returns.
+
+        Call this during daily retrain, not every signal scan.
+
+        Args:
+            market_data: dict of symbol -> OHLCV DataFrame.
+        """
+        all_returns = []
+        for symbol, df in market_data.items():
+            if not df.empty and len(df) > 1:
+                rets = df["close"].pct_change().dropna().values
+                all_returns.append(rets)
+
+        if not all_returns:
+            logger.warning("fit_hmm: no valid return series found")
+            return
+
+        min_len = min(len(r) for r in all_returns)
+        if min_len < 30:
+            logger.warning("fit_hmm: need >= 30 return observations, got %d", min_len)
+            return
+
+        stacked = np.column_stack([r[-min_len:] for r in all_returns])
+        portfolio_returns = stacked.mean(axis=1)
+
+        self.hmm.fit(portfolio_returns)
+        trans = self.hmm.get_transition_probs()
+        logger.info("HMM fitted on %d observations, transitions: %s", min_len, trans)
 
     def _detect_volatility(self, market_data: Dict[str, pd.DataFrame],
                             vix: float = None) -> str:

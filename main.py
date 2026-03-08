@@ -23,6 +23,11 @@ from core.data_engine import DataEngine
 from core.regime_detector import RegimeDetector
 from core.outcome_labeler import OutcomeLabeler
 from core.ml_ensemble import MLEnsemble
+try:
+    from core.meta_labeler import MetaLabeler
+    HAS_META_LABELER = True
+except ImportError:
+    HAS_META_LABELER = False
 from risk.portfolio_risk import PortfolioRiskManager
 from risk.position_sizer import PositionSizer
 from strategies.momentum import MomentumStrategy
@@ -68,6 +73,12 @@ class AlphaDesk:
         self.regime_detector = RegimeDetector()
         self.outcome_labeler = OutcomeLabeler(config.db_path)
         self.ml_ensemble = MLEnsemble(model_dir=model_dir)
+
+        # Meta-labeler (López de Prado): per-strategy false positive filter
+        if HAS_META_LABELER:
+            self.meta_labeler = MetaLabeler(model_dir=model_dir)
+        else:
+            self.meta_labeler = None
 
         # Cache current regime fingerprint
         self._current_regime = None
@@ -159,6 +170,34 @@ class AlphaDesk:
         except Exception as e:
             logger.error(f"Regime detection failed: {e}")
 
+    def _apply_regime_allocations(self):
+        """Update strategy allocation_pct based on current regime."""
+        if self._current_regime is None:
+            return
+
+        vix_level = None
+        vol_regime = self._current_regime.data.get("volatility_regime")
+        # Map volatility regime back to approximate VIX for allocation lookup
+        vix_map = {"low": 12, "medium": 18, "high": 25, "extreme": 35}
+        if vol_regime in vix_map:
+            vix_level = vix_map[vol_regime]
+
+        trend_regime = self._current_regime.data.get("trend_regime")
+        adjusted = config.allocation.get_regime_adjusted(
+            vix_level=vix_level, trend_regime=trend_regime
+        )
+
+        # Apply to each strategy
+        name_map = {s.name: s for s in self.strategies}
+        for name, weight in adjusted.items():
+            if name in name_map:
+                name_map[name].allocation_pct = weight
+
+        logger.info(
+            f"Regime-adjusted allocations: "
+            + ", ".join(f"{k}={v:.0%}" for k, v in adjusted.items())
+        )
+
     # ────────────────────── Main Cycle ──────────────────────
 
     async def run_signal_scan(self):
@@ -179,8 +218,9 @@ class AlphaDesk:
         await self.update_portfolio_state()
         self.data_engine.clear_cache()
 
-        # 2. Detect regime
+        # 2. Detect regime and adjust strategy allocations
         await self.detect_regime()
+        self._apply_regime_allocations()
 
         # 3. Check exits on existing positions
         await self._check_exits()
@@ -194,6 +234,16 @@ class AlphaDesk:
         all_signals: List[TradeSignal] = []
         for strategy in self.strategies:
             try:
+                # Strategy qualification gate (Simons): min 50 trades + Sharpe > 0.3
+                perf = self.db.get_strategy_performance(strategy.name, days=180)
+                if perf["trades"] > 0 and (perf["trades"] < 50 or perf.get("sharpe", 0) < 0.3):
+                    logger.info(
+                        f"[{strategy.name}] Unqualified: {perf['trades']} trades, "
+                        f"Sharpe {perf.get('sharpe', 0):.2f} (need 50+ trades, Sharpe > 0.3)"
+                    )
+                    # Still allow signal generation but reduce allocation by 50%
+                    strategy.allocation_pct *= 0.5
+
                 # Check regime favorability
                 if self._current_regime:
                     if (strategy.name == "momentum" and
@@ -241,6 +291,14 @@ class AlphaDesk:
                 if ml_result["ml_active"]:
                     signal.confidence = ml_result["ml_confidence_adj"]
 
+                # ── Meta-labeling filter (per-strategy false positive gate) ──
+                if self.meta_labeler is not None:
+                    if not self.meta_labeler.should_trade(signal.strategy_name, signal_data):
+                        vetoed += 1
+                        logger.info(f"META-LABEL VETO: {signal.symbol} ({signal.strategy_name})")
+                        self._log_signal_with_features(signal, ml_result, regime_data, executed=False)
+                        continue
+
                 # ── Risk check ──
                 allowed, reason = self.risk_manager.check_can_trade(signal)
                 if not allowed:
@@ -276,9 +334,15 @@ class AlphaDesk:
                     signal, ml_result, regime_data, executed=True
                 )
 
-                # ── Execute trade ──
+                # ── Spread check (delay if spread > 2x median) ──
                 from config.instruments import get_instrument_id
                 etoro_id = get_instrument_id(signal.symbol) or signal.instrument_id
+                spread_info = await self.etoro.check_spread(etoro_id)
+                if not spread_info.get("ok"):
+                    logger.warning(f"Wide spread for {signal.symbol}: {spread_info['reason']} — skipping")
+                    continue
+
+                # ── Execute trade ──
                 is_buy = signal.signal.value in ("BUY", "STRONG_BUY", 1, 2)
                 result = await self.etoro.open_position(
                     instrument_id=etoro_id,
@@ -289,6 +353,8 @@ class AlphaDesk:
                 )
 
                 # Log trade
+                fill_price = result.get("entryPrice", signal.entry_price)
+                shortfall = (fill_price - signal.entry_price) / signal.entry_price if signal.entry_price else 0.0
                 self.db.log_trade_open(signal_id, {
                     "symbol": signal.symbol,
                     "strategy": signal.strategy_name,
@@ -298,6 +364,7 @@ class AlphaDesk:
                     "stop_loss": signal.stop_loss,
                     "take_profit": signal.take_profit,
                     "etoro_position_id": result.get("positionId"),
+                    "shortfall": shortfall,
                 })
 
                 # Notify

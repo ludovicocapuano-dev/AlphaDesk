@@ -106,6 +106,34 @@ class EtoroClient:
             f"/market-data/instruments/{instrument_id}/history/candles/{direction}/{interval}/{count}",
         )
 
+    async def check_spread(self, instrument_id: int, median_spread: float = None) -> dict:
+        """Check bid-ask spread for an instrument.
+        Returns spread info and whether it's safe to trade (spread < 2x median).
+        """
+        try:
+            data = await self.get_rates([instrument_id])
+            rates = data if isinstance(data, list) else data.get("rates", [data])
+            if not rates:
+                return {"ok": True, "spread": 0, "reason": "No rate data"}
+
+            rate = rates[0] if isinstance(rates, list) else rates
+            ask = rate.get("askPrice", rate.get("ask", 0))
+            bid = rate.get("bidPrice", rate.get("bid", 0))
+            mid = (ask + bid) / 2 if (ask + bid) > 0 else 1
+            spread = (ask - bid) / mid if mid > 0 else 0
+
+            if median_spread and spread > 2 * median_spread:
+                return {
+                    "ok": False,
+                    "spread": spread,
+                    "median": median_spread,
+                    "reason": f"Spread {spread:.4%} > 2x median {median_spread:.4%}",
+                }
+            return {"ok": True, "spread": spread}
+        except Exception as e:
+            logger.warning(f"Spread check failed for {instrument_id}: {e}")
+            return {"ok": True, "spread": 0, "reason": f"Check failed: {e}"}
+
     # ────────────────────── Portfolio ──────────────────────
 
     async def get_portfolio(self) -> dict:

@@ -176,17 +176,19 @@ class TradeDB:
             ).fetchall()
 
         if not rows:
-            return {"win_rate": 0.5, "avg_win": 0.02, "avg_loss": 0.01, "trades": 0}
+            return {"win_rate": 0.5, "avg_win": 0.02, "avg_loss": 0.01, "trades": 0, "n_trades": 0}
 
         returns = [r[0] for r in rows if r[0] is not None]
         wins = [r for r in returns if r > 0]
         losses = [r for r in returns if r < 0]
 
+        n = len(returns)
         return {
-            "win_rate": len(wins) / len(returns) if returns else 0.5,
+            "win_rate": len(wins) / n if n else 0.5,
             "avg_win": sum(wins) / len(wins) if wins else 0.02,
             "avg_loss": sum(losses) / len(losses) if losses else -0.01,
-            "trades": len(returns),
+            "trades": n,
+            "n_trades": n,  # alias for Kelly sizer
             "total_return": sum(returns),
             "sharpe": (
                 (sum(returns) / len(returns)) / (

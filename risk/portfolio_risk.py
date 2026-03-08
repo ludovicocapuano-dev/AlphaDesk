@@ -15,6 +15,22 @@ logger = logging.getLogger("alphadesk.risk.portfolio")
 
 
 @dataclass
+class DrawdownAction:
+    """Describes the current drawdown level and associated restrictions."""
+    level: int                        # 0–5 (0 = normal)
+    drawdown: float                   # current drawdown as positive fraction
+    size_multiplier: float            # multiplier for new position sizes (1.0 = normal)
+    reduce_existing: float            # fraction to cut existing positions (0.0 = none)
+    allowed_strategies: List[str]     # strategies allowed to open new trades
+    tighten_stops_pct: float          # tighten stops by this fraction (0.0 = no change)
+    halt_hours: int                   # hours to halt trading (0 = no halt)
+    require_manual_review: bool       # if True, manual review needed before restart
+    message: str                      # human-readable description
+
+    ALL_STRATEGIES = ["momentum", "mean_reversion", "factor_model", "fx_carry"]
+
+
+@dataclass
 class PortfolioState:
     """Current state of the portfolio for risk assessment."""
     equity: float = 0
@@ -91,39 +107,57 @@ class PortfolioRiskManager:
                 return False, f"Trading halted until {self.state.halt_until}"
             else:
                 self.state.is_halted = False
+                self._manual_review_required = False
                 logger.info("Trading halt expired, resuming")
 
-        # 2. Drawdown circuit breakers
-        dd = self.state.current_drawdown
-        if dd >= self.config.max_drawdown_halt:
+        # 2. Manual review gate (level 5 requires explicit restart)
+        if getattr(self, "_manual_review_required", False):
+            return False, "HALT: Manual review required before restart"
+
+        # 3. Graduated drawdown circuit breakers
+        action = self.get_drawdown_action()
+
+        if action.level >= 4:
+            # Level 4/5: halt trading entirely
             self.state.is_halted = True
-            self.state.halt_until = datetime.utcnow() + timedelta(hours=48)
-            return False, f"HALT: Drawdown {dd:.1%} exceeds {self.config.max_drawdown_halt:.0%}"
+            self.state.halt_until = datetime.utcnow() + timedelta(hours=action.halt_hours)
+            if action.require_manual_review:
+                self._manual_review_required = True
+            return False, f"HALT: {action.message}"
 
-        if dd >= self.config.max_drawdown_reduce:
-            # Allow only at 50% normal size
-            logger.warning(f"Drawdown warning: {dd:.1%}. Reducing position sizes 50%")
-            # Signal to caller to halve sizes — we still allow the trade
-            signal.suggested_size_pct *= 0.5
+        if action.level >= 1:
+            # Check if this strategy is allowed at current drawdown level
+            strategy_name = signal.strategy_name
+            if strategy_name not in action.allowed_strategies:
+                return False, (f"Strategy {strategy_name} blocked at drawdown level "
+                              f"{action.level} ({action.drawdown:.1%})")
 
-        # 3. Daily VaR limit
+            # Apply size reduction
+            signal.suggested_size_pct *= action.size_multiplier
+            if action.level >= 2:
+                logger.warning(
+                    f"Drawdown L{action.level}: {action.drawdown:.1%}. "
+                    f"Size multiplier {action.size_multiplier:.0%}"
+                )
+
+        # 4. Daily VaR limit
         daily_var = self._compute_daily_var()
         if daily_var > self.config.daily_var_limit:
             return False, f"Daily VaR {daily_var:.2%} exceeds limit {self.config.daily_var_limit:.0%}"
 
-        # 4. Strategy allocation limits
+        # 5. Strategy allocation limits
         strategy = signal.strategy_name
         current_exposure = self.state.strategy_exposures.get(strategy, 0)
         if current_exposure >= self.config.max_strategy_exposure:
             return False, (f"Strategy {strategy} exposure {current_exposure:.1%} "
                           f"at limit {self.config.max_strategy_exposure:.0%}")
 
-        # 5. Correlation check
+        # 6. Correlation check
         corr_ok, corr_msg = self._check_correlation(signal)
         if not corr_ok:
             return False, corr_msg
 
-        # 6. Mandatory stop loss
+        # 7. Mandatory stop loss
         if self.config.mandatory_stop_loss and signal.stop_loss == signal.entry_price:
             return False, "Trade rejected: no stop loss defined"
 
@@ -189,11 +223,85 @@ class PortfolioRiskManager:
         self._pnl_history.append(pnl)
         self.state.daily_pnl = pnl
 
-    def should_reduce_all(self) -> Tuple[bool, float]:
-        """Check if we need to reduce all positions (drawdown protection)."""
+    def get_drawdown_action(self) -> DrawdownAction:
+        """
+        Determine the current graduated drawdown response level.
+
+        Levels:
+          0: Normal operation
+          1: -5%  — warning, tighten stops 20%
+          2: -10% — 75% size, no new momentum trades
+          3: -15% — 50% positions, only mean reversion
+          4: -20% — close all except hedges, halt 24h
+          5: -25% — full halt 48h, require manual review
+        """
         dd = self.state.current_drawdown
-        if dd >= self.config.max_drawdown_halt:
-            return True, 1.0  # Close everything
-        elif dd >= self.config.max_drawdown_reduce:
-            return True, 0.5  # Cut 50%
+        cfg = self.config
+        all_strats = DrawdownAction.ALL_STRATEGIES
+
+        if dd >= cfg.drawdown_level_5:
+            return DrawdownAction(
+                level=5, drawdown=dd, size_multiplier=0.0, reduce_existing=1.0,
+                allowed_strategies=[], tighten_stops_pct=0.0,
+                halt_hours=48, require_manual_review=True,
+                message=f"LEVEL 5: Drawdown {dd:.1%} — full halt 48h, manual review required",
+            )
+        if dd >= cfg.drawdown_level_4:
+            return DrawdownAction(
+                level=4, drawdown=dd, size_multiplier=0.0, reduce_existing=1.0,
+                allowed_strategies=[], tighten_stops_pct=0.0,
+                halt_hours=24, require_manual_review=False,
+                message=f"LEVEL 4: Drawdown {dd:.1%} — close all except hedges, halt 24h",
+            )
+        if dd >= cfg.drawdown_level_3:
+            return DrawdownAction(
+                level=3, drawdown=dd, size_multiplier=0.50, reduce_existing=0.5,
+                allowed_strategies=["mean_reversion"], tighten_stops_pct=0.20,
+                halt_hours=0, require_manual_review=False,
+                message=f"LEVEL 3: Drawdown {dd:.1%} — 50% reduction, mean reversion only",
+            )
+        if dd >= cfg.drawdown_level_2:
+            return DrawdownAction(
+                level=2, drawdown=dd, size_multiplier=0.75, reduce_existing=0.0,
+                allowed_strategies=["mean_reversion", "factor_model", "fx_carry"],
+                tighten_stops_pct=0.20, halt_hours=0, require_manual_review=False,
+                message=f"LEVEL 2: Drawdown {dd:.1%} — 75% size, no momentum",
+            )
+        if dd >= cfg.drawdown_level_1:
+            logger.warning(f"Drawdown warning L1: {dd:.1%} — tightening stops 20%")
+            return DrawdownAction(
+                level=1, drawdown=dd, size_multiplier=1.0, reduce_existing=0.0,
+                allowed_strategies=list(all_strats), tighten_stops_pct=0.20,
+                halt_hours=0, require_manual_review=False,
+                message=f"LEVEL 1: Drawdown {dd:.1%} — warning, stops tightened 20%",
+            )
+
+        # Level 0: Normal
+        return DrawdownAction(
+            level=0, drawdown=dd, size_multiplier=1.0, reduce_existing=0.0,
+            allowed_strategies=list(all_strats), tighten_stops_pct=0.0,
+            halt_hours=0, require_manual_review=False,
+            message="Normal operation",
+        )
+
+    def should_reduce_all(self) -> Tuple[bool, float]:
+        """
+        Check if we need to reduce all positions (drawdown protection).
+        Returns (should_reduce, reduction_fraction).
+
+        Compatible with existing callers:
+          reduction >= 1.0 → close everything
+          0 < reduction < 1.0 → reduce by that fraction
+          reduction == 0.0 → no action
+        """
+        action = self.get_drawdown_action()
+        if action.reduce_existing > 0:
+            return True, action.reduce_existing
         return False, 0.0
+
+    def clear_manual_review(self):
+        """Call after manual review to allow trading to resume."""
+        self._manual_review_required = False
+        self.state.is_halted = False
+        self.state.halt_until = None
+        logger.info("Manual review cleared — trading may resume")

@@ -158,13 +158,44 @@ class FactorModelStrategy(BaseStrategy):
         return scores
 
     def _rank_and_select(self, scored_stocks: List[dict]) -> List[TradeSignal]:
-        """Rank stocks and generate signals for top quintile."""
+        """Rank stocks and generate signals for top quintile.
+        Uses denoised covariance (Marcenko-Pastur) for risk-adjusted weighting.
+        """
+        from core.data_engine import DataEngine
+
         # Sort by composite score
         scored_stocks.sort(key=lambda x: x["score"]["composite"], reverse=True)
 
         # Top quintile (top 20%)
         n_select = max(1, len(scored_stocks) // 5)
         top_stocks = scored_stocks[:n_select]
+
+        # Risk-adjusted weighting via denoised covariance
+        if len(top_stocks) >= 3:
+            returns_dict = {}
+            for stock in top_stocks:
+                df = stock.get("df")
+                if df is not None and len(df) > 60:
+                    returns_dict[stock["symbol"]] = df["close"].pct_change().dropna().tail(60)
+
+            if len(returns_dict) >= 3:
+                returns_df = pd.DataFrame(returns_dict).dropna()
+                if len(returns_df) > 20:
+                    try:
+                        denoised_cov = DataEngine.denoise_covariance(returns_df)
+                        # Inverse-variance weighting from denoised matrix
+                        inv_var = 1.0 / np.diag(denoised_cov.values).clip(1e-8)
+                        raw_weights = inv_var / inv_var.sum()
+                        weight_map = dict(zip(returns_df.columns, raw_weights))
+                    except Exception as e:
+                        logger.debug(f"Denoised cov failed, using equal weight: {e}")
+                        weight_map = {}
+                else:
+                    weight_map = {}
+            else:
+                weight_map = {}
+        else:
+            weight_map = {}
 
         signals = []
         equal_weight = 1.0 / len(top_stocks) if top_stocks else 0
@@ -173,6 +204,9 @@ class FactorModelStrategy(BaseStrategy):
             price = stock["price"]
             atr = stock["atr"]
             composite = stock["score"]["composite"]
+
+            # Use denoised inverse-variance weight if available, else equal weight
+            w = weight_map.get(stock["symbol"], equal_weight)
 
             # Stop loss: wider for factor strategy (longer holding)
             stop_loss = price * (1 - 0.08)   # 8% max loss
@@ -189,11 +223,12 @@ class FactorModelStrategy(BaseStrategy):
                 entry_price=price,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
-                suggested_size_pct=equal_weight * self.allocation_pct,
+                suggested_size_pct=w * self.allocation_pct,
                 metadata={
                     "factor_scores": stock["score"],
                     "rank": scored_stocks.index(stock) + 1,
                     "total_universe": len(scored_stocks),
+                    "denoised_weight": w,
                 },
             ))
 
