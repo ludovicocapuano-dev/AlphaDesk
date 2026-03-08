@@ -18,14 +18,15 @@ logger = logging.getLogger("alphadesk.strategy.fx_carry")
 # Approximate central bank policy rates (updated periodically)
 # In production, these should be fetched from FRED or a rates API
 POLICY_RATES = {
-    "USD": 0.0450,   # Fed Funds
-    "EUR": 0.0275,   # ECB Main Refi
-    "GBP": 0.0425,   # BoE Bank Rate
-    "JPY": 0.0050,   # BoJ
-    "AUD": 0.0410,   # RBA
-    "NZD": 0.0375,   # RBNZ
-    "CHF": 0.0050,   # SNB
-    "CAD": 0.0275,   # BoC
+    # Updated March 2026 — Fed easing cycle underway
+    "USD": 0.0375,   # Fed Funds (was 4.50%, cut to 3.50-3.75%)
+    "EUR": 0.0250,   # ECB Main Refi (cut 25bp Jan 2026)
+    "GBP": 0.0400,   # BoE Bank Rate
+    "JPY": 0.0025,   # BoJ (still near zero)
+    "AUD": 0.0385,   # RBA (cut 25bp Feb 2026)
+    "NZD": 0.0350,   # RBNZ
+    "CHF": 0.0025,   # SNB
+    "CAD": 0.0250,   # BoC (aggressive easing)
 }
 
 

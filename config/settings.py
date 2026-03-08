@@ -38,11 +38,14 @@ class RiskConfig:
 
 @dataclass
 class StrategyAllocation:
-    """Capital allocation per strategy."""
-    momentum: float = 0.30      # 30%
-    mean_reversion: float = 0.20  # 20%
-    factor_model: float = 0.20   # 20%
-    fx_carry: float = 0.30       # 30%
+    """Capital allocation per strategy.
+    Updated March 2026: Risk-off regime favors mean reversion,
+    reduced FX carry due to tariff-driven vol.
+    """
+    momentum: float = 0.25      # 25% (was 30% — reduced in risk-off)
+    mean_reversion: float = 0.30  # 30% (was 20% — ranging markets favor MR)
+    factor_model: float = 0.25   # 25% (was 20% — value rotation underway)
+    fx_carry: float = 0.20       # 20% (was 30% — tariff uncertainty)
 
 
 @dataclass

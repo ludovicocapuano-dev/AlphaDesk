@@ -1,10 +1,18 @@
 """
-AlphaDesk — Main Orchestrator
-Coordinates strategies, risk management, and execution.
+AlphaDesk — Main Orchestrator (v2 — Self-Learning Ensemble)
+Coordinates strategies, risk management, ML ensemble, and execution.
+
+v2 additions:
+- RegimeDetector: fingerprints market state for every decision
+- OutcomeLabeler: backfills PnL at 15m/1h/4h/24h horizons
+- MLEnsemble: PyTorch meta-model that learns when strategies work
+- Feature vectors logged with every signal for closed-loop learning
 """
 
 import asyncio
+import json
 import logging
+import os
 import sys
 from datetime import datetime
 from typing import List
@@ -12,6 +20,9 @@ from typing import List
 from config.settings import config
 from core.etoro_client import EtoroClient
 from core.data_engine import DataEngine
+from core.regime_detector import RegimeDetector
+from core.outcome_labeler import OutcomeLabeler
+from core.ml_ensemble import MLEnsemble
 from risk.portfolio_risk import PortfolioRiskManager
 from risk.position_sizer import PositionSizer
 from strategies.momentum import MomentumStrategy
@@ -27,7 +38,7 @@ logger = logging.getLogger("alphadesk.main")
 
 
 class AlphaDesk:
-    """Main trading system orchestrator."""
+    """Main trading system orchestrator with self-learning ML ensemble."""
 
     def __init__(self):
         # Core components
@@ -52,6 +63,15 @@ class AlphaDesk:
             enabled=config.telegram.enabled,
         )
 
+        # ── v2: Self-Learning Components ──
+        model_dir = os.path.join(os.path.dirname(config.db_path), "models")
+        self.regime_detector = RegimeDetector()
+        self.outcome_labeler = OutcomeLabeler(config.db_path)
+        self.ml_ensemble = MLEnsemble(model_dir=model_dir)
+
+        # Cache current regime fingerprint
+        self._current_regime = None
+
         # Strategies
         self.strategies = [
             MomentumStrategy(config.allocation.momentum),
@@ -63,9 +83,11 @@ class AlphaDesk:
     async def initialize(self):
         """Initialize: fetch instruments, map IDs, update portfolio state."""
         logger.info("=" * 60)
-        logger.info("AlphaDesk initializing...")
+        logger.info("AlphaDesk v2 initializing (Self-Learning Ensemble)")
         logger.info(f"Environment: {config.etoro.environment}")
         logger.info(f"Strategies: {[s.name for s in self.strategies]}")
+        logger.info(f"ML Ensemble: {'ACTIVE' if self.ml_ensemble.is_active else 'COLD START'}")
+        logger.info(f"Model version: v{self.ml_ensemble.model_version}")
 
         # Fetch instrument metadata and map IDs
         try:
@@ -120,35 +142,85 @@ class AlphaDesk:
         except Exception as e:
             logger.error(f"Failed to update portfolio state: {e}")
 
+    # ────────────────────── Regime Detection ──────────────────────
+
+    async def detect_regime(self, market_data: dict = None):
+        """
+        Detect current market regime.
+        Called before signal generation to attach fingerprint to every decision.
+        """
+        try:
+            if market_data is None:
+                # Build market data from cached OHLCV
+                market_data = {}
+                from config.instruments import US_EQUITIES
+                for symbol, meta in list(US_EQUITIES.items())[:10]:
+                    inst_id = meta.get("etoro_id")
+                    if inst_id:
+                        df = await self.data_engine.get_ohlcv(inst_id, symbol, "OneDay", 60)
+                        if not df.empty:
+                            df = self.data_engine.compute_indicators(df)
+                            market_data[symbol] = df
+
+            if market_data:
+                self._current_regime = self.regime_detector.detect(market_data)
+                logger.info(f"Regime: {self._current_regime}")
+
+                # Check for extreme conditions
+                if self._current_regime.is_extreme:
+                    logger.warning("⚠️ EXTREME regime detected — reducing exposure")
+                    await self.notifier.notify_risk_alert(
+                        "Extreme Regime",
+                        f"Regime fingerprint: {self._current_regime}\n"
+                        "Action: Reducing new position sizes by 50%"
+                    )
+
+        except Exception as e:
+            logger.error(f"Regime detection failed: {e}")
+
     # ────────────────────── Main Cycle ──────────────────────
 
     async def run_signal_scan(self):
         """
-        Main trading cycle:
+        Main trading cycle (v2 — with ML ensemble):
         1. Update portfolio state
-        2. Check existing positions for exits
-        3. Generate new signals from all strategies
-        4. Risk-check and size signals
-        5. Execute approved trades
+        2. Detect market regime
+        3. Check existing positions for exits
+        4. Generate new signals from all strategies
+        5. ML ensemble: predict outcome probability, adjust confidence
+        6. Risk-check and size signals
+        7. Execute approved trades
+        8. Log features + regime for closed-loop learning
         """
-        logger.info("─── Signal Scan Starting ───")
+        logger.info("─── Signal Scan v2 Starting ───")
 
         # 1. Update state
         await self.update_portfolio_state()
         self.data_engine.clear_cache()
 
-        # 2. Check exits on existing positions
+        # 2. Detect regime
+        await self.detect_regime()
+
+        # 3. Check exits on existing positions
         await self._check_exits()
 
-        # 3. Check if trading is halted
+        # 4. Check if trading is halted
         if self.risk_manager.state.is_halted:
             logger.warning("Trading is HALTED — skipping signal generation")
             return
 
-        # 4. Generate signals from all strategies
+        # 5. Generate signals from all strategies
         all_signals: List[TradeSignal] = []
         for strategy in self.strategies:
             try:
+                # Check regime favorability
+                if self._current_regime:
+                    if (strategy.name == "momentum" and
+                            not self._current_regime.is_favorable_for_momentum and
+                            self._current_regime.data.get("trend_regime") not in ("weak_up", "strong_up")):
+                        logger.info(f"[{strategy.name}] Skipped — unfavorable regime")
+                        continue
+
                 positions = [p for p in self.risk_manager.state.positions
                             if p.get("strategy_tag") == strategy.name]
                 signals = await strategy.generate_signals(self.data_engine, positions)
@@ -162,17 +234,45 @@ class AlphaDesk:
             logger.info("No signals generated this cycle")
             return
 
-        # 5. Risk-check and execute
+        # 6. ML Ensemble filtering + Risk-check + Execute
         executed = 0
+        vetoed = 0
         for signal in all_signals:
             try:
-                # Risk check
+                # ── ML Ensemble prediction ──
+                signal_data = self._build_signal_data(signal)
+                regime_data = self._current_regime.to_dict() if self._current_regime else {}
+
+                ml_result = self.ml_ensemble.predict(signal_data, regime_data)
+
+                # Veto check
+                if ml_result["ml_veto"]:
+                    vetoed += 1
+                    logger.info(
+                        f"ML VETO: {signal.symbol} — "
+                        f"P(profit)={ml_result['ml_probability']:.2%}"
+                    )
+                    # Still log the signal for learning (even vetoed ones)
+                    self._log_signal_with_features(signal, ml_result, regime_data, executed=False)
+                    continue
+
+                # Update signal confidence with ML adjustment
+                if ml_result["ml_active"]:
+                    signal.confidence = ml_result["ml_confidence_adj"]
+
+                # ── Risk check ──
                 allowed, reason = self.risk_manager.check_can_trade(signal)
                 if not allowed:
                     logger.info(f"Signal rejected: {signal.symbol} — {reason}")
+                    self._log_signal_with_features(signal, ml_result, regime_data, executed=False)
                     continue
 
-                # Size position
+                # ── Extreme regime: reduce size by 50% ──
+                size_multiplier = 1.0
+                if self._current_regime and self._current_regime.is_extreme:
+                    size_multiplier = 0.5
+
+                # ── Size position ──
                 asset_type = "fx" if signal.strategy_name == "fx_carry" else "equity"
                 perf = self.db.get_strategy_performance(signal.strategy_name)
                 sizing = self.position_sizer.compute_trade_size(
@@ -183,10 +283,15 @@ class AlphaDesk:
                     logger.info(f"Signal skipped: {signal.symbol} — {sizing.get('reason')}")
                     continue
 
-                # Log signal
-                signal_id = self.db.log_signal(signal)
+                # Apply regime multiplier
+                sizing["dollar_amount"] *= size_multiplier
 
-                # Execute trade
+                # ── Log signal with features (before execution) ──
+                signal_id = self._log_signal_with_features(
+                    signal, ml_result, regime_data, executed=True
+                )
+
+                # ── Execute trade ──
                 result = await self.etoro.open_position(
                     instrument_id=signal.instrument_id,
                     direction=signal.direction,
@@ -208,23 +313,78 @@ class AlphaDesk:
                 })
 
                 # Notify
+                ml_tag = f" | ML: {ml_result['ml_probability']:.0%}" if ml_result["ml_active"] else ""
                 await self.notifier.notify_signal(signal)
                 await self.notifier.notify_trade_executed({
                     "symbol": signal.symbol,
                     "direction": signal.direction,
                     "amount": sizing["dollar_amount"],
+                    "ml_probability": ml_result["ml_probability"],
                 })
 
                 executed += 1
                 logger.info(
                     f"✅ EXECUTED: {signal.direction} {signal.symbol} "
                     f"${sizing['dollar_amount']:,.2f} | {signal.strategy_name}"
+                    f"{ml_tag}"
                 )
 
             except Exception as e:
                 logger.error(f"Execution failed for {signal.symbol}: {e}")
 
-        logger.info(f"─── Scan Complete: {executed}/{len(all_signals)} executed ───")
+        logger.info(
+            f"─── Scan Complete: {executed}/{len(all_signals)} executed, "
+            f"{vetoed} ML-vetoed ───"
+        )
+
+    def _build_signal_data(self, signal: TradeSignal) -> dict:
+        """Extract ML feature data from a TradeSignal."""
+        meta = signal.metadata or {}
+        return {
+            "momentum_score": meta.get("momentum_score", 0),
+            "mr_zscore": meta.get("z_score", 0),
+            "factor_score": meta.get("factor_score", 0),
+            "fx_carry_score": meta.get("carry_score", 0),
+            "confidence": signal.confidence,
+            "risk_reward": signal.risk_reward_ratio,
+            "atr_pct": meta.get("atr_pct", 0.02),
+            "volume_ratio": meta.get("volume_ratio", 1.0),
+            "rsi": meta.get("rsi", 50),
+            "macd": meta.get("macd", 0),
+            "bb_position": meta.get("bb_position", 0.5),
+            "momentum_3m": meta.get("momentum_3m", 0),
+            "sma_cross": meta.get("sma_cross", False),
+            "hour": datetime.utcnow().hour,
+        }
+
+    def _log_signal_with_features(self, signal: TradeSignal, ml_result: dict,
+                                    regime_data: dict, executed: bool) -> int:
+        """Log signal with full feature vector and regime fingerprint for ML learning."""
+        import sqlite3
+
+        # Log base signal
+        signal_id = self.db.log_signal(signal)
+
+        # Attach regime + feature vector
+        try:
+            with sqlite3.connect(self.db.db_path) as conn:
+                conn.execute(
+                    """UPDATE signals
+                       SET regime_fingerprint = ?,
+                           feature_vector = ?,
+                           executed = ?
+                       WHERE id = ?""",
+                    (
+                        json.dumps(regime_data),
+                        json.dumps(ml_result.get("feature_vector", [])),
+                        1 if executed else 0,
+                        signal_id,
+                    ),
+                )
+        except Exception as e:
+            logger.error(f"Failed to attach features to signal {signal_id}: {e}")
+
+        return signal_id
 
     async def _check_exits(self):
         """Check all open positions for exit signals."""
@@ -264,6 +424,19 @@ class AlphaDesk:
                 except Exception as e:
                     logger.error(f"Exit check failed for {symbol}: {e}")
 
+    # ────────────────────── Outcome Labeling ──────────────────────
+
+    async def run_outcome_labeling(self):
+        """Label outcomes for past decisions (runs every 15 min after signal scan)."""
+        try:
+            labeled = await self.outcome_labeler.label_outcomes(self.data_engine)
+            if labeled > 0:
+                logger.info(f"Labeled {labeled} decision outcomes")
+        except Exception as e:
+            logger.error(f"Outcome labeling failed: {e}")
+
+    # ────────────────────── Risk & Summary ──────────────────────
+
     async def run_risk_check(self):
         """Periodic risk monitoring (runs more frequently than signals)."""
         await self.update_portfolio_state()
@@ -278,7 +451,6 @@ class AlphaDesk:
                 f"Drawdown: {summary['current_drawdown']:.1%}\n"
                 f"Action: Reducing all positions by {reduction:.0%}"
             )
-            # In production, this would close/reduce positions
             if reduction >= 1.0:
                 for pos in self.risk_manager.state.positions:
                     try:
@@ -287,12 +459,31 @@ class AlphaDesk:
                         logger.error(f"Failed to close {pos.get('symbol')}: {e}")
 
     async def run_daily_summary(self):
-        """End-of-day summary and snapshot."""
+        """End-of-day summary with ML status."""
         await self.update_portfolio_state()
         summary = self.risk_manager.get_portfolio_summary()
         self.db.save_daily_snapshot(summary)
+
+        # Add ML ensemble status to summary
+        ml_status = self.ml_ensemble.get_status()
+        summary["ml_ensemble"] = ml_status
+
+        # Add labeling stats
+        label_stats = self.outcome_labeler.get_labeling_stats()
+        summary["labeling"] = label_stats
+
         await self.notifier.notify_daily_summary(summary)
-        logger.info(f"Daily snapshot saved: equity=${summary['equity']:,.2f}")
+        logger.info(
+            f"Daily snapshot: equity=${summary['equity']:,.2f}, "
+            f"ML v{ml_status['model_version']} "
+            f"({'active' if ml_status['active'] else 'cold start'})"
+        )
+
+    async def run_daily_retrain(self):
+        """Daily ML retrain (03:15 UTC)."""
+        from core.daily_retrain import label_and_retrain
+        result = await label_and_retrain(self.data_engine)
+        return result
 
     async def shutdown(self):
         """Clean shutdown."""
@@ -309,6 +500,7 @@ async def main():
     try:
         await desk.initialize()
         await desk.run_signal_scan()
+        await desk.run_outcome_labeling()
         await desk.run_daily_summary()
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

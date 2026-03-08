@@ -2,32 +2,58 @@
 AlphaDesk — Instrument Universe
 eToro instrument IDs and metadata.
 Update these IDs from the eToro Metadata/Instruments API endpoint.
+
+Updated March 2026: Added energy/industrial/defensive names from
+market briefing (sector rotation from tech to value/cyclicals).
 """
 
 # Equity universe — US large caps (eToro instrument IDs)
 # NOTE: These are placeholder IDs. Fetch actual IDs from:
 # GET https://public-api.etoro.com/api/v1/metadata/instruments
 US_EQUITIES = {
+    # ── Technology (core but reduced weight in risk-off) ──
     "AAPL": {"etoro_id": None, "sector": "Technology"},
     "MSFT": {"etoro_id": None, "sector": "Technology"},
     "GOOGL": {"etoro_id": None, "sector": "Technology"},
     "AMZN": {"etoro_id": None, "sector": "Consumer Discretionary"},
     "NVDA": {"etoro_id": None, "sector": "Technology"},
     "META": {"etoro_id": None, "sector": "Technology"},
-    "TSLA": {"etoro_id": None, "sector": "Consumer Discretionary"},
+    "NFLX": {"etoro_id": None, "sector": "Communication"},
+
+    # ── Energy (overweight — tariff beneficiaries, strong cash flows) ──
+    "XOM": {"etoro_id": None, "sector": "Energy"},
+    "CVX": {"etoro_id": None, "sector": "Energy"},
+    "SLB": {"etoro_id": None, "sector": "Energy"},
+
+    # ── Industrials (overweight — infrastructure + reshoring) ──
+    "CAT": {"etoro_id": None, "sector": "Industrials"},
+    "DE": {"etoro_id": None, "sector": "Industrials"},
+    "GE": {"etoro_id": None, "sector": "Industrials"},
+    "HD": {"etoro_id": None, "sector": "Consumer Discretionary"},
+
+    # ── Financials (benefiting from rate environment) ──
     "JPM": {"etoro_id": None, "sector": "Financials"},
+    "BAC": {"etoro_id": None, "sector": "Financials"},
     "V": {"etoro_id": None, "sector": "Financials"},
+
+    # ── Healthcare (defensive quality) ──
     "JNJ": {"etoro_id": None, "sector": "Healthcare"},
+    "UNH": {"etoro_id": None, "sector": "Healthcare"},
+    "PFE": {"etoro_id": None, "sector": "Healthcare"},
+
+    # ── Consumer Staples (defensive — VIX > 20 overweight) ──
     "WMT": {"etoro_id": None, "sector": "Consumer Staples"},
     "PG": {"etoro_id": None, "sector": "Consumer Staples"},
-    "XOM": {"etoro_id": None, "sector": "Energy"},
-    "UNH": {"etoro_id": None, "sector": "Healthcare"},
-    "HD": {"etoro_id": None, "sector": "Consumer Discretionary"},
-    "BAC": {"etoro_id": None, "sector": "Financials"},
-    "DIS": {"etoro_id": None, "sector": "Communication"},
     "KO": {"etoro_id": None, "sector": "Consumer Staples"},
-    "PFE": {"etoro_id": None, "sector": "Healthcare"},
-    "NFLX": {"etoro_id": None, "sector": "Communication"},
+    "COST": {"etoro_id": None, "sector": "Consumer Staples"},
+
+    # ── Materials (tariff/inflation hedge) ──
+    "X": {"etoro_id": None, "sector": "Materials"},
+    "NUE": {"etoro_id": None, "sector": "Materials"},
+
+    # ── Consumer Discretionary (selective) ──
+    "TSLA": {"etoro_id": None, "sector": "Consumer Discretionary"},
+    "DIS": {"etoro_id": None, "sector": "Communication"},
 }
 
 # European equities
