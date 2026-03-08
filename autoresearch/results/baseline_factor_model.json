@@ -1,0 +1,28 @@
+{
+  "experiment_id": "baseline_factor_model",
+  "strategy": "factor_model",
+  "timestamp": "2026-03-08T10:23:46.171663",
+  "elapsed_seconds": 15.3,
+  "params": {
+    "value_weight": 0.35,
+    "quality_weight": 0.3,
+    "momentum_weight": 0.35,
+    "rebalance_days": 21,
+    "stop_loss_pct": 0.08,
+    "take_profit_pct": 0.15,
+    "max_positions": 10,
+    "min_data_days": 120,
+    "min_composite": 0.5
+  },
+  "metrics": {
+    "score": 0.7808,
+    "sharpe_ratio": 1.0476,
+    "total_return": 0.2581,
+    "total_pnl": 25812.36,
+    "max_drawdown": 0.1428,
+    "num_trades": 196,
+    "win_rate": 0.4898,
+    "profit_factor": 1.6149,
+    "avg_holding_days": 53.4
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "experiment_id": "mom_exp4",
+  "strategy": "momentum",
+  "timestamp": "2026-03-08T10:51:51.378758",
+  "elapsed_seconds": 70.7,
+  "params": {
+    "breakout_period": 15,
+    "trend_sma": 40,
+    "long_trend_sma": 200,
+    "volume_threshold": 1.0,
+    "atr_multiplier": 3.5,
+    "min_momentum_3m": 0.01,
+    "rsi_overbought": 85,
+    "rsi_oversold": 20,
+    "max_positions": 15,
+    "min_confidence": 0.4,
+    "min_rr_ratio": 0.8,
+    "tp_atr_multiplier": 6.0
+  },
+  "metrics": {
+    "score": 0.7684,
+    "sharpe_ratio": 1.0296,
+    "total_return": 0.1712,
+    "total_pnl": 17124.8,
+    "max_drawdown": 0.09,
+    "num_trades": 135,
+    "win_rate": 0.4,
+    "profit_factor": 1.8326,
+    "avg_holding_days": 85.0
+  }
+}

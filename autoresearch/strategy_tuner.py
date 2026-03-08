@@ -12,50 +12,50 @@ After modifying, run:
 # MOMENTUM STRATEGY
 # ═══════════════════════════════════════════════════════════════════
 MOMENTUM_PARAMS = {
-    "breakout_period": 20,        # [10, 40] — lookback for breakout
-    "trend_sma": 50,              # [20, 100] — short-term trend MA
+    "breakout_period": 15,        # [10, 40] — lookback for breakout
+    "trend_sma": 40,              # [20, 100] — short-term trend MA
     "long_trend_sma": 200,        # [100, 252] — long-term trend MA
-    "volume_threshold": 1.5,      # [1.0, 3.0] — volume surge filter
-    "atr_multiplier": 2.0,        # [1.0, 4.0] — stop loss distance
-    "min_momentum_3m": 0.05,      # [0.0, 0.15] — min 3-month return
-    "rsi_overbought": 75,         # [65, 85] — max RSI for entry
-    "rsi_oversold": 30,           # [20, 40] — RSI sweet spot floor
-    "max_positions": 8,           # [3, 15]
-    "min_confidence": 0.6,        # [0.3, 0.8]
-    "min_rr_ratio": 1.5,          # [0.8, 3.0]
-    "tp_atr_multiplier": 3.0,     # [1.5, 6.0] — take profit = N * atr * ATR
+    "volume_threshold": 1.0,      # [1.0, 3.0] — volume surge filter
+    "atr_multiplier": 3.0,        # [1.0, 4.0] — stop loss distance
+    "min_momentum_3m": 0.02,      # [0.0, 0.15] — min 3-month return
+    "rsi_overbought": 82,         # [65, 85] — max RSI for entry
+    "rsi_oversold": 25,           # [20, 40] — RSI sweet spot floor
+    "max_positions": 12,          # [3, 15]
+    "min_confidence": 0.45,       # [0.3, 0.8]
+    "min_rr_ratio": 1.0,          # [0.8, 3.0]
+    "tp_atr_multiplier": 5.0,     # [1.5, 6.0] — take profit = N * atr * ATR
 }
 
 # ═══════════════════════════════════════════════════════════════════
 # MEAN REVERSION STRATEGY
 # ═══════════════════════════════════════════════════════════════════
 MEAN_REVERSION_PARAMS = {
-    "z_entry_long": -2.0,         # [-3.0, -1.0] — buy when Z < this
-    "z_entry_short": 2.0,         # [1.0, 3.0] — sell when Z > this
-    "z_exit": 0.3,                # [0.0, 1.0] — close when Z returns to this
-    "z_stop": 3.5,                # [2.5, 5.0] — hard stop Z level
-    "min_lookback": 60,           # [30, 120]
-    "rsi_long_threshold": 35,     # [20, 45] — RSI < this for long entry
-    "rsi_short_threshold": 65,    # [55, 80] — RSI > this for short entry
-    "sl_atr_multiplier": 1.5,     # [1.0, 3.0]
-    "max_positions": 6,           # [3, 12]
-    "min_confidence": 0.55,       # [0.3, 0.8]
-    "min_rr_ratio": 1.2,          # [0.5, 2.5]
+    "z_entry_long": -2.8,         # [-3.0, -1.0] — buy when Z < this
+    "z_entry_short": 2.8,         # [1.0, 3.0] — sell when Z > this
+    "z_exit": 0.0,                # [0.0, 1.0] — close when Z returns to this
+    "z_stop": 4.5,                # [2.5, 5.0] — hard stop Z level
+    "min_lookback": 90,           # [30, 120]
+    "rsi_long_threshold": 22,     # [20, 45] — RSI < this for long entry
+    "rsi_short_threshold": 78,    # [55, 80] — RSI > this for short entry
+    "sl_atr_multiplier": 2.5,     # [1.0, 3.0]
+    "max_positions": 10,          # [3, 12]
+    "min_confidence": 0.4,        # [0.3, 0.8]
+    "min_rr_ratio": 2.0,          # [0.5, 2.5]
 }
 
 # ═══════════════════════════════════════════════════════════════════
 # FACTOR MODEL STRATEGY
 # ═══════════════════════════════════════════════════════════════════
 FACTOR_MODEL_PARAMS = {
-    "value_weight": 0.35,         # [0.1, 0.6] — sum of 3 weights = 1.0
-    "quality_weight": 0.30,       # [0.1, 0.6]
+    "value_weight": 0.30,         # [0.1, 0.6] — sum of 3 weights = 1.0
+    "quality_weight": 0.35,       # [0.1, 0.6]
     "momentum_weight": 0.35,     # [0.1, 0.6]
-    "rebalance_days": 21,         # [5, 63] — rebalance frequency
-    "stop_loss_pct": 0.08,        # [0.03, 0.15] — hard stop %
-    "take_profit_pct": 0.15,      # [0.05, 0.30] — target %
-    "max_positions": 10,          # [5, 20]
-    "min_data_days": 120,         # [60, 252] — FIXED: was 252 (too high, caused 0 trades)
-    "min_composite": 0.5,         # [0.3, 0.7] — min composite score for entry
+    "rebalance_days": 15,         # [5, 63] — rebalance frequency
+    "stop_loss_pct": 0.03,        # [0.03, 0.15] — hard stop %
+    "take_profit_pct": 0.30,      # [0.05, 0.30] — target %
+    "max_positions": 18,          # [5, 20]
+    "min_data_days": 60,          # [60, 252] — FIXED: was 252 (too high, caused 0 trades)
+    "min_composite": 0.30,        # [0.3, 0.7] — min composite score for entry
 }
 
 # ═══════════════════════════════════════════════════════════════════
@@ -66,8 +66,8 @@ FX_CARRY_PARAMS = {
     "carry_weight": 0.70,         # [0.2, 0.9] — carry contribution
     "momentum_weight": 0.30,      # [0.1, 0.8] — momentum contribution
     "trend_filter_sma": 50,       # [20, 100] — SMA for trend filter
-    "atr_stop_multiplier": 1.5,   # [1.0, 3.0] — stop = N * ATR
-    "min_composite_score": 0.05,  # [0.01, 0.15] — min |composite| for entry
+    "atr_stop_multiplier": 2.0,   # [1.0, 3.0] — stop = N * ATR
+    "min_composite_score": 0.08,  # [0.01, 0.15] — min |composite| for entry
     "max_positions": 6,           # [2, 10]
     "min_confidence": 0.5,        # [0.3, 0.8]
     "min_rr_ratio": 1.0,          # [0.5, 2.0]

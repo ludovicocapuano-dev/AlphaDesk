@@ -1,0 +1,28 @@
+{
+  "experiment_id": "fm_exp4",
+  "strategy": "factor_model",
+  "timestamp": "2026-03-08T10:53:33.057598",
+  "elapsed_seconds": 11.6,
+  "params": {
+    "value_weight": 0.3,
+    "quality_weight": 0.35,
+    "momentum_weight": 0.35,
+    "rebalance_days": 15,
+    "stop_loss_pct": 0.03,
+    "take_profit_pct": 0.3,
+    "max_positions": 18,
+    "min_data_days": 60,
+    "min_composite": 0.3
+  },
+  "metrics": {
+    "score": 0.8779,
+    "sharpe_ratio": 1.7023,
+    "total_return": 0.8196,
+    "total_pnl": 81960.33,
+    "max_drawdown": 0.1779,
+    "num_trades": 401,
+    "win_rate": 0.2319,
+    "profit_factor": 2.3783,
+    "avg_holding_days": 49.3
+  }
+}

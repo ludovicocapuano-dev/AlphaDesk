@@ -1,0 +1,30 @@
+{
+  "experiment_id": "mr_exp2",
+  "strategy": "mean_reversion",
+  "timestamp": "2026-03-08T10:42:14.843993",
+  "elapsed_seconds": 66.5,
+  "params": {
+    "z_entry_long": -2.2,
+    "z_entry_short": 2.2,
+    "z_exit": 0.2,
+    "z_stop": 4.0,
+    "min_lookback": 60,
+    "rsi_long_threshold": 30,
+    "rsi_short_threshold": 70,
+    "sl_atr_multiplier": 2.5,
+    "max_positions": 8,
+    "min_confidence": 0.5,
+    "min_rr_ratio": 1.5
+  },
+  "metrics": {
+    "score": 0.6554,
+    "sharpe_ratio": -0.0808,
+    "total_return": -0.0108,
+    "total_pnl": -1082.86,
+    "max_drawdown": 0.0576,
+    "num_trades": 448,
+    "win_rate": 0.3705,
+    "profit_factor": 1.0483,
+    "avg_holding_days": 14.4
+  }
+}

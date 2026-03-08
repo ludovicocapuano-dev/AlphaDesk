@@ -1,0 +1,31 @@
+{
+  "experiment_id": "baseline_momentum",
+  "strategy": "momentum",
+  "timestamp": "2026-03-08T10:28:57.659523",
+  "elapsed_seconds": 69.2,
+  "params": {
+    "breakout_period": 20,
+    "trend_sma": 50,
+    "long_trend_sma": 200,
+    "volume_threshold": 1.5,
+    "atr_multiplier": 2.0,
+    "min_momentum_3m": 0.05,
+    "rsi_overbought": 75,
+    "rsi_oversold": 30,
+    "max_positions": 8,
+    "min_confidence": 0.6,
+    "min_rr_ratio": 1.5,
+    "tp_atr_multiplier": 3.0
+  },
+  "metrics": {
+    "score": 0.7166,
+    "sharpe_ratio": 0.531,
+    "total_return": 0.0501,
+    "total_pnl": 5014.92,
+    "max_drawdown": 0.0315,
+    "num_trades": 157,
+    "win_rate": 0.3121,
+    "profit_factor": 1.3554,
+    "avg_holding_days": 35.7
+  }
+}

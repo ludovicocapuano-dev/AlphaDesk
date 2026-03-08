@@ -1,0 +1,29 @@
+{
+  "experiment_id": "baseline_fx_carry",
+  "strategy": "fx_carry",
+  "timestamp": "2026-03-08T10:27:36.495578",
+  "elapsed_seconds": 2.2,
+  "params": {
+    "min_carry_spread": 0.01,
+    "carry_weight": 0.6,
+    "momentum_weight": 0.4,
+    "trend_filter_sma": 50,
+    "atr_stop_multiplier": 1.5,
+    "min_composite_score": 0.05,
+    "max_positions": 6,
+    "min_confidence": 0.5,
+    "min_rr_ratio": 1.0,
+    "max_risk_per_pair": 0.015
+  },
+  "metrics": {
+    "score": 0.5624,
+    "sharpe_ratio": -1.5812,
+    "total_return": -0.0149,
+    "total_pnl": -1493.2,
+    "max_drawdown": 0.017,
+    "num_trades": 169,
+    "win_rate": 0.2249,
+    "profit_factor": 0.644,
+    "avg_holding_days": 24.0
+  }
+}

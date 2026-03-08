@@ -1,0 +1,30 @@
+{
+  "experiment_id": "baseline_mean_reversion",
+  "strategy": "mean_reversion",
+  "timestamp": "2026-03-08T10:35:44.511084",
+  "elapsed_seconds": 68.3,
+  "params": {
+    "z_entry_long": -2.0,
+    "z_entry_short": 2.0,
+    "z_exit": 0.3,
+    "z_stop": 3.5,
+    "min_lookback": 60,
+    "rsi_long_threshold": 35,
+    "rsi_short_threshold": 65,
+    "sl_atr_multiplier": 1.5,
+    "max_positions": 6,
+    "min_confidence": 0.55,
+    "min_rr_ratio": 1.2
+  },
+  "metrics": {
+    "score": 0.6501,
+    "sharpe_ratio": -0.0853,
+    "total_return": -0.0142,
+    "total_pnl": -1421.34,
+    "max_drawdown": 0.0785,
+    "num_trades": 633,
+    "win_rate": 0.3681,
+    "profit_factor": 1.0506,
+    "avg_holding_days": 14.0
+  }
+}
