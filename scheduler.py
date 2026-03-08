@@ -22,6 +22,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from config.settings import config
 from main import AlphaDesk
 from utils.logger import setup_logging
+from utils.telegram_bot import TelegramBot
 
 logger = logging.getLogger("alphadesk.scheduler")
 
@@ -44,6 +45,7 @@ class AlphaDeskScheduler:
     def __init__(self):
         self.desk = AlphaDesk()
         self.scheduler = AsyncIOScheduler(timezone="UTC")
+        self.bot = TelegramBot(self.desk)
         self._running = True
 
     def setup_schedules(self):
@@ -121,7 +123,8 @@ class AlphaDeskScheduler:
 
         logger.info("All schedules configured:")
         for job in self.scheduler.get_jobs():
-            logger.info(f"  • {job.name} — next run: {job.next_run_time}")
+            nrt = getattr(job, 'next_run_time', None)
+            logger.info(f"  • {job.name} — next run: {nrt}")
 
     async def _refresh_data(self):
         """Refresh cached data."""
@@ -216,9 +219,10 @@ class AlphaDeskScheduler:
         # Setup schedules
         self.setup_schedules()
 
-        # Start
+        # Start scheduler + interactive bot
         self.scheduler.start()
-        logger.info("Scheduler started. Running H24.")
+        await self.bot.start()
+        logger.info("Scheduler + Telegram bot started. Running H24.")
 
         ml_status = self.desk.ml_ensemble.get_status()
         await self.desk.notifier.send(
@@ -243,6 +247,7 @@ class AlphaDeskScheduler:
         """Graceful shutdown."""
         logger.info("Stopping scheduler...")
         self._running = False
+        await self.bot.stop()
         self.scheduler.shutdown(wait=True)
         await self.desk.shutdown()
         await self.desk.notifier.send("🔴 <b>AlphaDesk v2 OFFLINE</b>")
