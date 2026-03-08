@@ -22,6 +22,7 @@ EQUITY_SYMBOLS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
     "JPM", "V", "JNJ", "WMT", "PG", "XOM", "UNH", "HD",
     "BAC", "DIS", "KO", "PFE", "NFLX",
+    "GDX", "GLD", "SLV",  # Gold/Silver miners & ETFs
 ]
 
 FX_SYMBOLS = [

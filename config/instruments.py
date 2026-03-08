@@ -39,11 +39,29 @@ US_EQUITIES = {
     "KO": {"etoro_id": 1024, "sector": "Consumer Staples"},
 }
 
-# ETFs currently in portfolio
+# ETFs & Mining
 ETFS = {
     "XLE": {"etoro_id": 3008, "sector": "Energy"},
     "OIH": {"etoro_id": 3206, "sector": "Energy"},
     "BE": {"etoro_id": 6614, "sector": "Energy"},
+    "GDX": {"etoro_id": 3002, "sector": "Gold Miners"},
+    "GLD": {"etoro_id": 3025, "sector": "Gold"},
+    "SLV": {"etoro_id": 4430, "sector": "Silver"},
+}
+
+# Commodities
+COMMODITIES = {
+    "GOLD": {"etoro_id": 18, "sector": "Precious Metals"},
+    "SILVER": {"etoro_id": 19, "sector": "Precious Metals"},
+    "OIL": {"etoro_id": 17, "sector": "Energy"},
+    "NATGAS": {"etoro_id": 22, "sector": "Energy"},
+}
+
+# Indices
+INDICES = {
+    "SPX500": {"etoro_id": 27, "sector": "US Index"},
+    "NSDQ100": {"etoro_id": 28, "sector": "US Index"},
+    "GER40": {"etoro_id": 32, "sector": "EU Index"},
 }
 
 # Forex pairs
@@ -58,7 +76,7 @@ FX_PAIRS = {
 
 # All instruments flat mapping: symbol -> etoro_id
 ALL_IDS = {}
-for _d in (US_EQUITIES, ETFS, FX_PAIRS):
+for _d in (US_EQUITIES, ETFS, COMMODITIES, INDICES, FX_PAIRS):
     for _sym, _meta in _d.items():
         ALL_IDS[_sym] = _meta["etoro_id"]
 
