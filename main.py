@@ -256,6 +256,10 @@ class AlphaDesk:
                 # ── Size position ──
                 asset_type = "fx" if signal.strategy_name == "fx_carry" else "equity"
                 perf = self.db.get_strategy_performance(signal.strategy_name)
+                # Pass available cash so sizer doesn't exceed it
+                if signal.metadata is None:
+                    signal.metadata = {}
+                signal.metadata["available_cash"] = self.risk_manager.state.cash
                 sizing = self.position_sizer.compute_trade_size(
                     self.risk_manager.state.equity, signal, perf, asset_type
                 )

@@ -46,7 +46,7 @@ class PortfolioRiskManager:
     def update_state(self, account_data: dict, positions: List[dict]):
         """Update portfolio state from eToro account data."""
         self.state.equity = account_data.get("equity", 0)
-        self.state.cash = account_data.get("availableBalance", 0)
+        self.state.cash = account_data.get("cash", account_data.get("availableBalance", 0))
         self.state.positions = positions
 
         # Update peak equity

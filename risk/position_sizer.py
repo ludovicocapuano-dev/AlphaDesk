@@ -122,6 +122,13 @@ class PositionSizer:
         if dollar_amount < 50:  # eToro minimum
             return {"execute": False, "reason": "Below minimum trade size"}
 
+        # Cap to available cash (passed via metadata or default to dollar_amount)
+        available_cash = signal.metadata.get("available_cash", dollar_amount)
+        if dollar_amount > available_cash:
+            if available_cash < 50:
+                return {"execute": False, "reason": f"Insufficient cash (${available_cash:.0f})"}
+            dollar_amount = available_cash * 0.90  # Keep 10% cash buffer
+
         return {
             "execute": True,
             "dollar_amount": round(dollar_amount, 2),
