@@ -168,10 +168,11 @@ class DataEngine:
         events = []
         s_pos, s_neg = 0.0, 0.0
         diff = close.pct_change().dropna()
+        expected = diff.mean()  # E[y_t] — demean per AFML formula
 
         for t, val in diff.items():
-            s_pos = max(0, s_pos + val)
-            s_neg = min(0, s_neg + val)
+            s_pos = max(0, s_pos + (val - expected))
+            s_neg = min(0, s_neg + (val - expected))
 
             if s_pos > threshold:
                 events.append(t)
@@ -421,8 +422,9 @@ class DataEngine:
         sadf_stats = {}
 
         for t in range(min_window, n):
-            # Generate at most 5 evenly spaced starting points
-            num_starts = min(5, t - min_window + 1)
+            # Sample starting points (all if <=20, else 20 evenly spaced)
+            n_valid = t - min_window + 1
+            num_starts = min(20, n_valid)
             start_indices = np.linspace(0, t - min_window, num_starts, dtype=int)
             # Deduplicate (linspace can produce repeats for small ranges)
             start_indices = np.unique(start_indices)

@@ -95,7 +95,8 @@ class MomentumStrategy(BaseStrategy):
         # return, divided by trailing 60-day realized volatility.
         ret_12m = latest.get("momentum_12m", 0)
         ret_1m = latest.get("momentum_1m", 0)
-        raw_12_1 = ret_12m - ret_1m  # intermediate 11-month return
+        # Correct compounding: P(t-21)/P(t-252) - 1
+        raw_12_1 = (1 + ret_12m) / max(1 + ret_1m, 0.01) - 1
 
         # 60-day annualized volatility for normalization
         daily_rets = df["close"].pct_change()

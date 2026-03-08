@@ -170,8 +170,11 @@ class FactorModelStrategy(BaseStrategy):
         latest = df.iloc[-1]
         mom_12m = latest.get("momentum_12m", 0)
         mom_1m = latest.get("momentum_1m", 0)
-        # 12-1 month momentum (skip last month to avoid reversal)
-        mom_12_1 = mom_12m - mom_1m if not np.isnan(mom_12m) and not np.isnan(mom_1m) else 0
+        # 12-1 month momentum: P(t-21)/P(t-252) - 1 (skip last month)
+        if not np.isnan(mom_12m) and not np.isnan(mom_1m):
+            mom_12_1 = (1 + mom_12m) / max(1 + mom_1m, 0.01) - 1
+        else:
+            mom_12_1 = 0
 
         # Normalize momentum to 0-1
         scores["momentum"] = self._sigmoid(mom_12_1, center=0, scale=0.3)
