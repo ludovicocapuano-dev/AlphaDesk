@@ -15,19 +15,30 @@ from strategies.base_strategy import BaseStrategy, Signal, TradeSignal
 logger = logging.getLogger("alphadesk.strategy.fx_carry")
 
 
-# Approximate central bank policy rates (updated periodically)
-# In production, these should be fetched from FRED or a rates API
-POLICY_RATES = {
-    # Updated March 2026 — Fed easing cycle underway
-    "USD": 0.0375,   # Fed Funds (was 4.50%, cut to 3.50-3.75%)
-    "EUR": 0.0250,   # ECB Main Refi (cut 25bp Jan 2026)
-    "GBP": 0.0400,   # BoE Bank Rate
-    "JPY": 0.0025,   # BoJ (still near zero)
-    "AUD": 0.0385,   # RBA (cut 25bp Feb 2026)
-    "NZD": 0.0350,   # RBNZ
-    "CHF": 0.0025,   # SNB
-    "CAD": 0.0250,   # BoC (aggressive easing)
-}
+# Historical central bank policy rates for backtesting accuracy
+# Each entry: (effective_date, rates_dict) — sorted chronologically
+HISTORICAL_RATES = [
+    ("2023-01-01", {"USD": 0.0450, "EUR": 0.0250, "GBP": 0.0350, "JPY": -0.001, "AUD": 0.0310, "NZD": 0.0425, "CHF": 0.0100, "CAD": 0.0425}),
+    ("2023-05-01", {"USD": 0.0525, "EUR": 0.0375, "GBP": 0.0425, "JPY": -0.001, "AUD": 0.0385, "NZD": 0.0525, "CHF": 0.0150, "CAD": 0.0475}),
+    ("2023-09-01", {"USD": 0.0550, "EUR": 0.0450, "GBP": 0.0525, "JPY": -0.001, "AUD": 0.0410, "NZD": 0.0550, "CHF": 0.0175, "CAD": 0.0500}),
+    ("2024-03-01", {"USD": 0.0550, "EUR": 0.0450, "GBP": 0.0525, "JPY": 0.0000, "AUD": 0.0435, "NZD": 0.0550, "CHF": 0.0175, "CAD": 0.0500}),
+    ("2024-07-01", {"USD": 0.0550, "EUR": 0.0425, "GBP": 0.0500, "JPY": 0.0025, "AUD": 0.0435, "NZD": 0.0550, "CHF": 0.0150, "CAD": 0.0475}),
+    ("2024-09-01", {"USD": 0.0500, "EUR": 0.0375, "GBP": 0.0500, "JPY": 0.0025, "AUD": 0.0435, "NZD": 0.0525, "CHF": 0.0125, "CAD": 0.0450}),
+    ("2024-12-01", {"USD": 0.0450, "EUR": 0.0325, "GBP": 0.0475, "JPY": 0.0025, "AUD": 0.0435, "NZD": 0.0475, "CHF": 0.0050, "CAD": 0.0350}),
+    ("2025-06-01", {"USD": 0.0425, "EUR": 0.0275, "GBP": 0.0425, "JPY": 0.0025, "AUD": 0.0410, "NZD": 0.0400, "CHF": 0.0025, "CAD": 0.0300}),
+    ("2026-01-01", {"USD": 0.0375, "EUR": 0.0250, "GBP": 0.0400, "JPY": 0.0025, "AUD": 0.0385, "NZD": 0.0350, "CHF": 0.0025, "CAD": 0.0250}),
+]
+
+# Current rates (latest entry) for live trading
+POLICY_RATES = HISTORICAL_RATES[-1][1]
+
+
+def get_rates_for_date(date_str: str) -> dict:
+    """Get policy rates applicable for a given date."""
+    for i in range(len(HISTORICAL_RATES) - 1, -1, -1):
+        if date_str >= HISTORICAL_RATES[i][0]:
+            return HISTORICAL_RATES[i][1]
+    return HISTORICAL_RATES[0][1]
 
 
 class FXCarryStrategy(BaseStrategy):
@@ -94,15 +105,17 @@ class FXCarryStrategy(BaseStrategy):
         scored_pairs.sort(key=lambda x: abs(x["composite_score"]), reverse=True)
         return self._generate_trade_signals(scored_pairs)
 
-    def _score_pair(self, pair_name: str, meta: dict, df: pd.DataFrame) -> Optional[dict]:
+    def _score_pair(self, pair_name: str, meta: dict, df: pd.DataFrame,
+                     rates: dict = None) -> Optional[dict]:
         """Score a pair on carry and momentum dimensions."""
         base = meta.get("base", "")
         quote = meta.get("quote", "")
         latest = df.iloc[-1]
 
         # ── CARRY SCORE ──
-        base_rate = POLICY_RATES.get(base, 0)
-        quote_rate = POLICY_RATES.get(quote, 0)
+        active_rates = rates or POLICY_RATES
+        base_rate = active_rates.get(base, 0)
+        quote_rate = active_rates.get(quote, 0)
         carry_differential = base_rate - quote_rate
 
         if abs(carry_differential) < self.min_carry_spread:
@@ -170,7 +183,10 @@ class FXCarryStrategy(BaseStrategy):
         if len(df) < 60:
             return None
 
-        score_data = self._score_pair(symbol, meta, df)
+        # Use historical rates for the current backtest date
+        date_str = str(df.index[-1])[:10]
+        rates = get_rates_for_date(date_str)
+        score_data = self._score_pair(symbol, meta, df, rates=rates)
         if not score_data:
             return None
 

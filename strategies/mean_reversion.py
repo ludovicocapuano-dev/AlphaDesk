@@ -33,11 +33,11 @@ class MeanReversionStrategy(BaseStrategy):
             allocation_pct=allocation_pct,
             max_positions=6,
         )
-        # Single-name params
-        self.z_entry_long = -2.0    # Buy when Z < -2
-        self.z_entry_short = 2.0    # Sell when Z > +2
-        self.z_exit = 0.3           # Exit when Z approaches 0
-        self.z_stop = 3.5           # Stop loss at extreme Z
+        # Single-name params (optimized via autoresearch exp4)
+        self.z_entry_long = -2.8    # Buy when Z < -2.8
+        self.z_entry_short = 2.8    # Sell when Z > +2.8
+        self.z_exit = 0.0           # Exit when Z crosses 0
+        self.z_stop = 4.5           # Stop loss at extreme Z
 
         # Pairs trading params
         self.coint_pvalue = 0.05    # Cointegration p-value threshold
@@ -45,7 +45,7 @@ class MeanReversionStrategy(BaseStrategy):
         self.pairs_z_exit = 0.5
 
         # Filters
-        self.min_lookback = 60       # Min days for Z-score calculation
+        self.min_lookback = 90       # Min days for Z-score calculation
         self.bb_squeeze_threshold = 0.03  # Bollinger Band width for squeeze
 
     async def generate_signals(self, data_engine, current_positions: List[dict]) -> List[TradeSignal]:
@@ -102,13 +102,13 @@ class MeanReversionStrategy(BaseStrategy):
 
         # ── Long signal: oversold ──
         if zscore < self.z_entry_long:
-            # Confirm with RSI divergence
-            if rsi < 35:
+            # Confirm with RSI divergence (optimized: RSI < 22)
+            if rsi < 22:
                 confidence = self._mr_confidence(zscore, rsi, df, direction="long")
 
                 entry = latest["close"]
                 atr = latest["atr"]
-                stop_loss = entry - (1.5 * atr)   # Tighter stop for MR
+                stop_loss = entry - (2.5 * atr)   # Wider stop (optimized)
                 # Target: return to mean (SMA20)
                 take_profit = latest["sma_20"]
 
@@ -133,12 +133,12 @@ class MeanReversionStrategy(BaseStrategy):
 
         # ── Short signal: overbought ──
         elif zscore > self.z_entry_short:
-            if rsi > 65:
+            if rsi > 78:
                 confidence = self._mr_confidence(zscore, rsi, df, direction="short")
 
                 entry = latest["close"]
                 atr = latest["atr"]
-                stop_loss = entry + (1.5 * atr)
+                stop_loss = entry + (2.5 * atr)
                 take_profit = latest["sma_20"]
 
                 return TradeSignal(
