@@ -6,6 +6,7 @@ Async HTTP + WebSocket client for eToro's public API.
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
@@ -31,17 +32,21 @@ class EtoroClient:
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
                 base_url=self.base_url,
-                headers=self._auth_headers(),
+                headers={
+                    "x-api-key": self.api_key,
+                    "x-user-key": self.user_key,
+                    "Content-Type": "application/json",
+                },
                 timeout=self.timeout,
             )
         return self._http_client
 
     def _auth_headers(self) -> dict:
         return {
-            "Authorization": f"Bearer {self.user_key}",
-            "Ocp-Apim-Subscription-Key": self.api_key,
+            "x-api-key": self.api_key,
+            "x-user-key": self.user_key,
+            "x-request-id": str(uuid.uuid4()),
             "Content-Type": "application/json",
-            "X-Environment": self.environment,
         }
 
     async def _request(self, method: str, path: str, **kwargs) -> dict:
@@ -51,7 +56,8 @@ class EtoroClient:
 
         for attempt in range(self.max_retries):
             try:
-                response = await client.request(method, path, **kwargs)
+                headers = {"x-request-id": str(uuid.uuid4())}
+                response = await client.request(method, path, headers=headers, **kwargs)
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
@@ -77,101 +83,96 @@ class EtoroClient:
 
     async def get_instruments(self) -> List[dict]:
         """Fetch all available instruments and their metadata."""
-        data = await self._request("GET", "/metadata/instruments")
+        data = await self._request("GET", "/market-data/instruments")
         return data.get("instruments", data) if isinstance(data, dict) else data
 
-    async def get_instrument_rate(self, instrument_id: int) -> dict:
-        """Get current rate for a specific instrument."""
-        return await self._request("GET", f"/instruments/{instrument_id}/rate")
+    async def search_instruments(self, query: str) -> dict:
+        """Search for instruments by name or symbol."""
+        return await self._request("GET", "/market-data/search", params={"q": query})
 
-    async def get_rates(self, instrument_ids: List[int]) -> List[dict]:
-        """Get rates for multiple instruments."""
+    async def get_rates(self, instrument_ids: List[int]) -> dict:
+        """Get current rates for instruments."""
         ids_str = ",".join(str(i) for i in instrument_ids)
-        return await self._request("GET", f"/instruments/rates", params={"instrumentIds": ids_str})
+        return await self._request("GET", "/market-data/instruments/rates", params={"instrumentIds": ids_str})
 
-    async def get_candles(self, instrument_id: int, period: str = "OneDay",
-                          count: int = 100) -> List[dict]:
+    async def get_candles(self, instrument_id: int, direction: str = "desc",
+                          interval: str = "OneDay", count: int = 100) -> dict:
         """Get historical OHLCV candles.
-        period: OneMinute, FiveMinutes, OneHour, OneDay, OneWeek, OneMonth
+        interval: OneMinute, FiveMinutes, OneHour, OneDay, OneWeek, OneMonth
+        direction: asc or desc
         """
-        return await self._request("GET", f"/instruments/{instrument_id}/candles", params={
-            "period": period,
-            "count": count,
-        })
+        return await self._request(
+            "GET",
+            f"/market-data/instruments/{instrument_id}/history/candles/{direction}/{interval}/{count}",
+        )
 
     # ────────────────────── Portfolio ──────────────────────
 
     async def get_portfolio(self) -> dict:
         """Get current portfolio with all open positions."""
-        return await self._request("GET", "/portfolio")
+        return await self._request("GET", "/trading/info/portfolio")
 
     async def get_positions(self) -> List[dict]:
         """Get all open positions."""
         data = await self.get_portfolio()
-        return data.get("positions", [])
+        return data.get("clientPortfolio", {}).get("positions", [])
 
-    async def get_account_balance(self) -> dict:
-        """Get account balance, equity, and available cash."""
-        return await self._request("GET", "/account/balance")
+    async def get_pnl(self) -> dict:
+        """Get real account PnL and portfolio details."""
+        return await self._request("GET", "/trading/info/real/pnl")
 
-    async def get_trade_history(self, start_date: str = None, end_date: str = None) -> List[dict]:
+    async def get_trade_history(self, min_date: str = "2024-01-01", page: int = 1, page_size: int = 100) -> list:
         """Get closed trade history."""
-        params = {}
-        if start_date:
-            params["startDate"] = start_date
-        if end_date:
-            params["endDate"] = end_date
-        return await self._request("GET", "/trades/history", params=params)
+        return await self._request("GET", "/trading/info/trade/history", params={
+            "minDate": min_date,
+            "page": page,
+            "pageSize": page_size,
+        })
 
     # ────────────────────── Trading ──────────────────────
 
-    async def open_position(self, instrument_id: int, direction: str,
+    async def open_position(self, instrument_id: int, is_buy: bool,
                             amount: float, stop_loss: float = None,
                             take_profit: float = None,
                             leverage: int = 1) -> dict:
         """
-        Open a new position.
+        Open a new position via market order.
 
         Args:
             instrument_id: eToro instrument ID
-            direction: "Buy" or "Sell"
+            is_buy: True for long, False for short
             amount: Dollar amount to invest
             stop_loss: Stop loss rate (price level)
             take_profit: Take profit rate (price level)
             leverage: Leverage multiplier (1 = no leverage)
         """
         payload = {
-            "instrumentId": instrument_id,
-            "direction": direction,
-            "amount": amount,
-            "leverage": leverage,
+            "InstrumentID": instrument_id,
+            "IsBuy": is_buy,
+            "Amount": amount,
+            "Leverage": leverage,
+            "IsTslEnabled": False,
+            "IsNoStopLoss": stop_loss is None,
+            "IsNoTakeProfit": take_profit is None,
         }
         if stop_loss is not None:
-            payload["stopLossRate"] = stop_loss
+            payload["StopLossRate"] = stop_loss
         if take_profit is not None:
-            payload["takeProfitRate"] = take_profit
+            payload["TakeProfitRate"] = take_profit
 
+        direction = "BUY" if is_buy else "SELL"
         logger.info(f"Opening {direction} position: {instrument_id}, ${amount}, "
                      f"SL={stop_loss}, TP={take_profit}, leverage={leverage}x")
-        return await self._request("POST", "/trades", json=payload)
+        return await self._request("POST", "/trading/execution/market-open-orders/by-amount", json=payload)
 
-    async def close_position(self, position_id: int) -> dict:
-        """Close an existing position."""
+    async def close_position(self, position_id: int, instrument_id: int,
+                              units_to_deduct: float = None) -> dict:
+        """Close an existing position (full or partial)."""
+        payload = {"InstrumentId": instrument_id}
+        if units_to_deduct is not None:
+            payload["UnitsToDeduct"] = units_to_deduct
         logger.info(f"Closing position: {position_id}")
-        return await self._request("DELETE", f"/trades/{position_id}")
-
-    async def update_position(self, position_id: int,
-                               stop_loss: float = None,
-                               take_profit: float = None) -> dict:
-        """Update stop loss or take profit on an existing position."""
-        payload = {}
-        if stop_loss is not None:
-            payload["stopLossRate"] = stop_loss
-        if take_profit is not None:
-            payload["takeProfitRate"] = take_profit
-
-        logger.info(f"Updating position {position_id}: SL={stop_loss}, TP={take_profit}")
-        return await self._request("PATCH", f"/trades/{position_id}", json=payload)
+        return await self._request("POST", f"/trading/execution/market-close-orders/positions/{position_id}", json=payload)
 
     # ────────────────────── Social / Watchlist ──────────────────────
 
