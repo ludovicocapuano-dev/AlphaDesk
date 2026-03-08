@@ -62,15 +62,15 @@ FACTOR_MODEL_PARAMS = {
 # FX CARRY STRATEGY
 # ═══════════════════════════════════════════════════════════════════
 FX_CARRY_PARAMS = {
-    "min_carry_spread": 0.005,    # [0.001, 0.03] — min rate differential
-    "carry_weight": 0.70,         # [0.2, 0.9] — carry contribution
-    "momentum_weight": 0.30,      # [0.1, 0.8] — momentum contribution
-    "trend_filter_sma": 50,       # [20, 100] — SMA for trend filter
+    "min_carry_spread": 0.015,    # [0.001, 0.03] — min rate differential
+    "carry_weight": 0.50,         # [0.2, 0.9] — carry contribution
+    "momentum_weight": 0.50,      # [0.1, 0.8] — momentum contribution
+    "trend_filter_sma": 20,       # [20, 100] — SMA for trend filter
     "atr_stop_multiplier": 2.0,   # [1.0, 3.0] — stop = N * ATR
-    "min_composite_score": 0.08,  # [0.01, 0.15] — min |composite| for entry
+    "min_composite_score": 0.12,  # [0.01, 0.15] — min |composite| for entry
     "max_positions": 6,           # [2, 10]
-    "min_confidence": 0.5,        # [0.3, 0.8]
-    "min_rr_ratio": 1.0,          # [0.5, 2.0]
+    "min_confidence": 0.6,        # [0.3, 0.8]
+    "min_rr_ratio": 1.5,          # [0.5, 2.0]
     "max_risk_per_pair": 0.015,   # [0.005, 0.04]
 }
 
