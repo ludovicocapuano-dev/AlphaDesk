@@ -1,17 +1,17 @@
 [Unit]
-Description=AlphaDesk Quant Trading System
+Description=AlphaDesk Quant Trading System v2
 After=network.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
 Type=simple
-User=YOUR_VPS_USER
-WorkingDirectory=/home/YOUR_VPS_USER/alphadesk
-ExecStart=/home/YOUR_VPS_USER/alphadesk/venv/bin/python scheduler.py
+User=alphadesk
+WorkingDirectory=/home/alphadesk/app
+ExecStart=/home/alphadesk/app/venv/bin/python scheduler.py
 
-# Environment variables (or use .env file)
-EnvironmentFile=/home/YOUR_VPS_USER/alphadesk/.env
+# Environment variables
+EnvironmentFile=/home/alphadesk/app/.env
 
 # Auto-restart on failure
 Restart=always

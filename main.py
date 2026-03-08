@@ -81,7 +81,7 @@ class AlphaDesk:
         ]
 
     async def initialize(self):
-        """Initialize: fetch instruments, map IDs, update portfolio state."""
+        """Initialize: load instrument IDs, update portfolio state."""
         logger.info("=" * 60)
         logger.info("AlphaDesk v2 initializing (Self-Learning Ensemble)")
         logger.info(f"Environment: {config.etoro.environment}")
@@ -89,55 +89,36 @@ class AlphaDesk:
         logger.info(f"ML Ensemble: {'ACTIVE' if self.ml_ensemble.is_active else 'COLD START'}")
         logger.info(f"Model version: v{self.ml_ensemble.model_version}")
 
-        # Fetch instrument metadata and map IDs
-        try:
-            instruments = await self.etoro.get_instruments()
-            self._map_instrument_ids(instruments)
-            logger.info(f"Loaded {len(instruments)} instruments from eToro")
-        except Exception as e:
-            logger.error(f"Failed to load instruments: {e}")
+        # Instrument IDs are hardcoded in config/instruments.py (immutable)
+        from config.instruments import ALL_IDS
+        logger.info(f"Instrument universe: {len(ALL_IDS)} symbols mapped")
 
         # Update portfolio state
         await self.update_portfolio_state()
         logger.info("Initialization complete")
         logger.info("=" * 60)
 
-    def _map_instrument_ids(self, instruments: list):
-        """Map eToro instrument IDs to our universe."""
-        from config.instruments import US_EQUITIES, EU_EQUITIES, FX_PAIRS
-
-        # Build lookup by symbol name
-        id_lookup = {}
-        for inst in instruments:
-            symbol = inst.get("SymbolFull", inst.get("symbolFull", ""))
-            inst_id = inst.get("InstrumentID", inst.get("instrumentId"))
-            if symbol and inst_id:
-                id_lookup[symbol.upper()] = inst_id
-
-        # Map to our universes
-        for universe in [US_EQUITIES, EU_EQUITIES]:
-            for symbol, meta in universe.items():
-                if meta["etoro_id"] is None:
-                    mapped_id = id_lookup.get(symbol.upper())
-                    if mapped_id:
-                        meta["etoro_id"] = mapped_id
-
-        for pair, meta in FX_PAIRS.items():
-            if meta["etoro_id"] is None:
-                mapped_id = id_lookup.get(pair.upper())
-                if mapped_id:
-                    meta["etoro_id"] = mapped_id
-
     async def update_portfolio_state(self):
         """Refresh portfolio state from eToro."""
         try:
-            balance = await self.etoro.get_account_balance()
-            positions = await self.etoro.get_positions()
+            portfolio = await self.etoro.get_portfolio()
+            cp = portfolio.get("clientPortfolio", portfolio)
+            positions = cp.get("positions", [])
+            credit = cp.get("credit", 0)
+
+            # Build balance dict for risk manager
+            total_invested = sum(p.get("initialAmountInDollars", 0) for p in positions)
+            balance = {
+                "cash": credit,
+                "equity": credit + total_invested,
+                "invested": total_invested,
+            }
+
             self.risk_manager.update_state(balance, positions)
             logger.info(
-                f"Portfolio: equity=${balance.get('equity', 0):,.2f}, "
-                f"positions={len(positions)}, "
-                f"drawdown={self.risk_manager.state.current_drawdown:.1%}"
+                f"Portfolio: equity=${balance['equity']:,.2f}, "
+                f"cash=${credit:.2f}, "
+                f"positions={len(positions)}"
             )
         except Exception as e:
             logger.error(f"Failed to update portfolio state: {e}")
@@ -292,9 +273,12 @@ class AlphaDesk:
                 )
 
                 # ── Execute trade ──
+                from config.instruments import get_instrument_id
+                etoro_id = get_instrument_id(signal.symbol) or signal.instrument_id
+                is_buy = signal.signal.value in ("BUY", "STRONG_BUY", 1, 2)
                 result = await self.etoro.open_position(
-                    instrument_id=signal.instrument_id,
-                    direction=signal.direction,
+                    instrument_id=etoro_id,
+                    is_buy=is_buy,
                     amount=sizing["dollar_amount"],
                     stop_loss=signal.stop_loss,
                     take_profit=signal.take_profit,
@@ -411,8 +395,9 @@ class AlphaDesk:
                     exit_signal = strategy.should_exit(position, df)
 
                     if exit_signal:
-                        pos_id = position.get("positionId")
-                        await self.etoro.close_position(pos_id)
+                        pos_id = position.get("positionID", position.get("positionId"))
+                        inst_id = position.get("instrumentID", position.get("instrumentId"))
+                        await self.etoro.close_position(pos_id, inst_id)
                         logger.info(
                             f"🔴 EXIT: {symbol} | {exit_signal.metadata.get('exit_reason', '')}"
                         )
@@ -454,9 +439,11 @@ class AlphaDesk:
             if reduction >= 1.0:
                 for pos in self.risk_manager.state.positions:
                     try:
-                        await self.etoro.close_position(pos.get("positionId"))
+                        pos_id = pos.get("positionID", pos.get("positionId"))
+                        inst_id = pos.get("instrumentID", pos.get("instrumentId"))
+                        await self.etoro.close_position(pos_id, inst_id)
                     except Exception as e:
-                        logger.error(f"Failed to close {pos.get('symbol')}: {e}")
+                        logger.error(f"Failed to close {pos.get('symbol', pos_id)}: {e}")
 
     async def run_daily_summary(self):
         """End-of-day summary with ML status."""
