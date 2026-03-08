@@ -34,6 +34,11 @@ from strategies.momentum import MomentumStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.factor_model import FactorModelStrategy
 from strategies.fx_carry import FXCarryStrategy
+try:
+    from strategies.pead import PEADStrategy
+    HAS_PEAD = True
+except ImportError:
+    HAS_PEAD = False
 from strategies.base_strategy import TradeSignal
 from utils.db import TradeDB
 from utils.logger import setup_logging
@@ -83,6 +88,13 @@ class AlphaDesk:
         # Cache current regime fingerprint
         self._current_regime = None
 
+        # News sentiment (VADER + RSS, lightweight)
+        try:
+            from core.news_sentiment import NewsSentiment
+            self.news_sentiment = NewsSentiment()
+        except ImportError:
+            self.news_sentiment = None
+
         # Strategies
         self.strategies = [
             MomentumStrategy(config.allocation.momentum),
@@ -90,6 +102,8 @@ class AlphaDesk:
             FactorModelStrategy(config.allocation.factor_model),
             FXCarryStrategy(config.allocation.fx_carry),
         ]
+        if HAS_PEAD:
+            self.strategies.append(PEADStrategy(allocation_pct=0.10))
 
     async def initialize(self):
         """Initialize: load instrument IDs, update portfolio state."""
@@ -158,9 +172,24 @@ class AlphaDesk:
                 self._current_regime = self.regime_detector.detect(market_data)
                 logger.info(f"Regime: {self._current_regime}")
 
+                # Enrich regime with news sentiment
+                if self.news_sentiment:
+                    try:
+                        macro = self.news_sentiment.get_macro_sentiment()
+                        self._current_regime.data["news_sentiment"] = macro.get("score", 0)
+                        fed = self.news_sentiment.get_fed_sentiment()
+                        self._current_regime.data["fed_sentiment"] = fed.get("score", 0)
+                        logger.info(
+                            f"Sentiment: macro={macro.get('score', 0):.2f} "
+                            f"({macro.get('n_articles', 0)} articles), "
+                            f"fed={fed.get('score', 0):.2f}"
+                        )
+                    except Exception as e:
+                        logger.debug(f"Sentiment fetch failed: {e}")
+
                 # Check for extreme conditions
                 if self._current_regime.is_extreme:
-                    logger.warning("⚠️ EXTREME regime detected — reducing exposure")
+                    logger.warning("EXTREME regime detected — reducing exposure")
                     await self.notifier.notify_risk_alert(
                         "Extreme Regime",
                         f"Regime fingerprint: {self._current_regime}\n"
