@@ -108,9 +108,13 @@ class BacktestEngine:
             all_dates.update(df.index.tolist())
         all_dates = sorted(all_dates)
 
-        # Filter date range
+        # Filter date range (handle tz-aware yfinance data)
         start = pd.Timestamp(self.config.start_date)
         end = pd.Timestamp(self.config.end_date)
+        # Match timezone of data if present
+        if all_dates and hasattr(all_dates[0], 'tzinfo') and all_dates[0].tzinfo is not None:
+            start = start.tz_localize(all_dates[0].tzinfo)
+            end = end.tz_localize(all_dates[0].tzinfo)
         all_dates = [d for d in all_dates if start <= d <= end]
 
         prev_equity = self.capital

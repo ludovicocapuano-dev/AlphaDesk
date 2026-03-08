@@ -148,7 +148,7 @@ class FactorModelStrategy(BaseStrategy):
         if pb is not None and pb > 0:
             scores["pb_score"] = max(0, 1 - (pb / 10))
 
-        value_factors = [v for k, v in scores.items() if k.endswith("_score") and "pe" in k or "pb" in k]
+        value_factors = [v for k, v in scores.items() if k.endswith("_score") and ("pe" in k or "pb" in k)]
         scores["value"] = np.mean(value_factors) if value_factors else 0.5
 
         # ── QUALITY FACTOR ──
@@ -264,6 +264,73 @@ class FactorModelStrategy(BaseStrategy):
             ))
 
         return signals[:self.max_positions]
+
+    def generate_signal_sync(self, symbol: str, instrument_id: int,
+                              df: pd.DataFrame) -> Optional[TradeSignal]:
+        """Synchronous single-stock signal for backtester compatibility.
+        Uses price-derived proxies when fundamentals are unavailable.
+        """
+        if df.empty or len(df) < 120:
+            return None
+
+        latest = df.iloc[-1]
+        price = latest["close"]
+        atr = latest.get("atr", price * 0.02)
+
+        # Momentum factor
+        mom_12m = latest.get("momentum_12m", 0)
+        mom_1m = latest.get("momentum_1m", 0)
+        if not np.isnan(mom_12m) and not np.isnan(mom_1m) and (1 + mom_1m) > 0.01:
+            mom_12_1 = (1 + mom_12m) / (1 + mom_1m) - 1
+        else:
+            mom_12_1 = 0
+        momentum_score = self._sigmoid(mom_12_1, center=0, scale=0.3)
+
+        # Value proxy: price distance below 200-day MA (cheaper = better)
+        sma_200 = latest.get("sma_200", price)
+        if sma_200 > 0:
+            value_score = self._sigmoid((sma_200 - price) / price, center=0, scale=0.15)
+        else:
+            value_score = 0.5
+
+        # Quality proxy: lower volatility = higher quality
+        vol_60 = df["close"].pct_change().tail(60).std()
+        if np.isnan(vol_60):
+            vol_60 = 0.02
+        quality_score = self._sigmoid(-vol_60, center=-0.02, scale=0.01)
+
+        composite = (
+            self.value_weight * value_score +
+            self.quality_weight * quality_score +
+            self.momentum_weight * momentum_score
+        )
+
+        if composite < 0.58:
+            return None
+
+        stop_loss = price * (1 - 0.08)
+        take_profit = price * (1 + 0.15)
+        signal_type = Signal.STRONG_BUY if composite > 0.7 else Signal.BUY
+
+        return TradeSignal(
+            symbol=symbol,
+            instrument_id=instrument_id,
+            signal=signal_type,
+            strategy_name=self.name,
+            confidence=min(0.95, composite),
+            entry_price=price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            suggested_size_pct=self.allocation_pct / self.max_positions,
+            metadata={
+                "factor_scores": {
+                    "value": round(value_score, 3),
+                    "quality": round(quality_score, 3),
+                    "momentum": round(momentum_score, 3),
+                    "composite": round(composite, 3),
+                },
+            },
+        )
 
     def should_exit(self, position: dict, current_data: pd.DataFrame) -> Optional[TradeSignal]:
         """Factor strategy: exit on monthly rebalance or fundamental deterioration."""

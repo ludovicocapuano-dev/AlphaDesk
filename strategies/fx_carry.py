@@ -157,6 +157,63 @@ class FXCarryStrategy(BaseStrategy):
             "quote_rate": quote_rate,
         }
 
+    def generate_signal_sync(self, symbol: str, instrument_id: int,
+                              df: pd.DataFrame) -> Optional[TradeSignal]:
+        """Synchronous signal for backtester compatibility."""
+        from config.instruments import FX_PAIRS
+
+        meta = FX_PAIRS.get(symbol)
+        if meta is None:
+            return None
+        if instrument_id == 0:
+            instrument_id = meta.get("etoro_id", 0)
+        if len(df) < 60:
+            return None
+
+        score_data = self._score_pair(symbol, meta, df)
+        if not score_data:
+            return None
+
+        composite = score_data["composite_score"]
+        if abs(composite) < 0.05:
+            return None
+
+        latest = df.iloc[-1]
+        entry = latest["close"]
+        atr = latest.get("atr", entry * 0.01)
+        if pd.isna(atr) or atr == 0:
+            atr = entry * 0.01
+
+        if composite > 0:
+            direction = Signal.BUY if composite < 0.15 else Signal.STRONG_BUY
+            stop_loss = entry - (self.atr_stop_multiplier * atr)
+            take_profit = entry + (2.5 * self.atr_stop_multiplier * atr)
+        else:
+            direction = Signal.SELL if abs(composite) < 0.15 else Signal.STRONG_SELL
+            stop_loss = entry + (self.atr_stop_multiplier * atr)
+            take_profit = entry - (2.5 * self.atr_stop_multiplier * atr)
+
+        confidence = min(0.90, 0.4 + abs(composite) * 0.3)
+        if score_data["trend_aligned"]:
+            confidence = min(0.95, confidence + 0.15)
+
+        return TradeSignal(
+            symbol=symbol,
+            instrument_id=instrument_id,
+            signal=direction,
+            strategy_name=self.name,
+            confidence=confidence,
+            entry_price=entry,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            suggested_size_pct=self.max_risk_per_pair,
+            metadata={
+                "carry_differential": score_data["carry_differential"],
+                "composite_score": composite,
+                "trend_aligned": score_data["trend_aligned"],
+            },
+        )
+
     def _generate_trade_signals(self, scored_pairs: List[dict]) -> List[TradeSignal]:
         """Generate trade signals from scored pairs."""
         signals = []

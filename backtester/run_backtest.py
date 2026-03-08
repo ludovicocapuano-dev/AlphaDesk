@@ -42,6 +42,9 @@ FX_SYMBOLS = [
     "USDCHF=X", "EURGBP=X",
 ]
 
+# yfinance uses "=X" suffix for FX; our FX_PAIRS dict uses plain names
+_FX_RENAME = {s: s.replace("=X", "") for s in FX_SYMBOLS}
+
 
 def fetch_historical_data(symbols: list, start: str, end: str) -> dict:
     """Fetch historical data from yfinance."""
@@ -65,8 +68,10 @@ def fetch_historical_data(symbols: list, start: str, end: str) -> dict:
 
             # Add technical indicators
             df = DataEngine.compute_indicators(df)
-            price_data[symbol] = df
-            logger.info(f"Loaded {symbol}: {len(df)} bars")
+            # Use internal name for FX (strip yfinance "=X" suffix)
+            key = _FX_RENAME.get(symbol, symbol)
+            price_data[key] = df
+            logger.info(f"Loaded {symbol} → {key}: {len(df)} bars")
 
         except Exception as e:
             logger.error(f"Failed to load {symbol}: {e}")
