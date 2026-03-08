@@ -40,6 +40,11 @@ class OutcomeLabeler:
         "24h": timedelta(hours=24),
     }
 
+    # Default triple-barrier parameters
+    TB_MAX_HOLDING = 20          # bars
+    TB_ATR_MULTIPLIER = 2.0      # volatility multiplier for barrier width
+    TB_LOOKBACK = 20             # bars for rolling volatility
+
     # A 'correct' buy is one where the price went up by more than slippage
     CORRECTNESS_THRESHOLD = 0.001  # 0.1% (above spread/slippage)
 
@@ -68,6 +73,11 @@ class OutcomeLabeler:
                 "regime_fingerprint": "TEXT",
                 "feature_vector": "TEXT",
                 "ml_training_ready": "INTEGER DEFAULT 0",
+                # Triple-barrier labeling columns (AFML Ch. 3)
+                "tb_label": "INTEGER",
+                "tb_exit_type": "TEXT",
+                "tb_holding_bars": "INTEGER",
+                "tb_return": "REAL",
             }
 
             for col_name, col_type in needed_columns.items():
@@ -81,6 +91,108 @@ class OutcomeLabeler:
                     pass  # Column already exists
 
             conn.commit()
+
+    @staticmethod
+    def compute_dynamic_barriers(close: pd.Series, entry_idx: int,
+                                  atr_multiplier: float = 2.0,
+                                  lookback: int = 20) -> tuple:
+        """
+        Compute dynamic upper/lower barriers based on recent volatility.
+
+        Uses rolling standard deviation of log-returns as a proxy for ATR.
+        Upper = atr_multiplier * rolling_std
+        Lower = -atr_multiplier * rolling_std
+
+        Args:
+            close: Full price series.
+            entry_idx: Integer index of entry point in the series.
+            atr_multiplier: Multiplier applied to volatility.
+            lookback: Number of bars for rolling volatility window.
+
+        Returns:
+            (upper_pct, lower_pct) as positive and negative fractions.
+        """
+        # Use up to entry_idx for lookback (avoid look-ahead bias)
+        start = max(0, entry_idx - lookback)
+        window = close.iloc[start:entry_idx + 1]
+
+        if len(window) < 2:
+            # Fallback: 2% barriers when insufficient history
+            return (0.02, -0.02)
+
+        log_returns = np.log(window / window.shift(1)).dropna()
+        vol = float(log_returns.std())
+
+        if vol <= 0 or np.isnan(vol):
+            return (0.02, -0.02)
+
+        upper = atr_multiplier * vol
+        lower = -atr_multiplier * vol
+        return (upper, lower)
+
+    @staticmethod
+    def triple_barrier_label(close: pd.Series, entry_idx: int,
+                             upper: float, lower: float,
+                             max_holding: int = 20) -> dict:
+        """
+        Triple-barrier labeling (López de Prado, AFML Ch. 3).
+
+        Three barriers determine the label:
+        1. Upper barrier (take-profit): touched first → label = +1
+        2. Lower barrier (stop-loss): touched first → label = -1
+        3. Vertical barrier (max holding period): hit → label = sign(return)
+
+        Barriers are set dynamically based on volatility (ATR or rolling std).
+
+        Args:
+            close: Full price series.
+            entry_idx: Integer index of entry point in the series.
+            upper: Upper barrier as fraction (e.g., 0.02 = +2%).
+            lower: Lower barrier as fraction (e.g., -0.02 = -2%).
+            max_holding: Maximum holding period in bars.
+
+        Returns:
+            dict with: label (+1, -1, 0), exit_idx, exit_type ('upper'/'lower'/'vertical'),
+                       return_pct, holding_bars
+        """
+        entry_price = close.iloc[entry_idx]
+        end_idx = min(entry_idx + max_holding, len(close) - 1)
+
+        # Walk forward bar by bar
+        for i in range(entry_idx + 1, end_idx + 1):
+            ret = (close.iloc[i] - entry_price) / entry_price
+
+            # Check upper barrier first (take-profit)
+            if ret >= upper:
+                return {
+                    "label": 1,
+                    "exit_idx": i,
+                    "exit_type": "upper",
+                    "return_pct": round(ret, 6),
+                    "holding_bars": i - entry_idx,
+                }
+
+            # Check lower barrier (stop-loss)
+            if ret <= lower:
+                return {
+                    "label": -1,
+                    "exit_idx": i,
+                    "exit_type": "lower",
+                    "return_pct": round(ret, 6),
+                    "holding_bars": i - entry_idx,
+                }
+
+        # Vertical barrier: max holding period reached
+        final_ret = (close.iloc[end_idx] - entry_price) / entry_price
+        label = int(np.sign(final_ret)) if final_ret != 0 else 0
+
+        return {
+            "label": label,
+            "exit_idx": end_idx,
+            "exit_type": "vertical",
+            "return_pct": round(final_ret, 6),
+            "holding_bars": end_idx - entry_idx,
+        }
 
     async def label_outcomes(self, data_engine) -> int:
         """
@@ -168,6 +280,85 @@ class OutcomeLabeler:
 
                 except Exception as e:
                     logger.error(f"Labeling error for signal {row['id']}: {e}")
+
+            # --- Triple-barrier labeling pass ---
+            tb_rows = conn.execute("""
+                SELECT id, timestamp, symbol, signal_type, entry_price
+                FROM signals
+                WHERE tb_label IS NULL
+                  AND entry_price IS NOT NULL
+                  AND entry_price > 0
+                  AND timestamp < ?
+                ORDER BY timestamp ASC
+                LIMIT 500
+            """, (cutoff_15m,)).fetchall()
+
+            for row in tb_rows:
+                try:
+                    signal_id = row["id"]
+                    signal_time = datetime.fromisoformat(row["timestamp"])
+                    symbol = row["symbol"]
+                    entry_price = row["entry_price"]
+
+                    # Fetch enough bars for lookback + max_holding
+                    bars_needed = self.TB_LOOKBACK + self.TB_MAX_HOLDING + 5
+                    from config.instruments import US_EQUITIES, EU_EQUITIES, FX_PAIRS
+                    all_instruments = {**US_EQUITIES, **EU_EQUITIES, **FX_PAIRS}
+                    instrument_id = all_instruments.get(symbol, {}).get("etoro_id")
+
+                    if not instrument_id:
+                        continue
+
+                    df = await data_engine.get_ohlcv(
+                        instrument_id, symbol, "OneHour", bars_needed
+                    )
+                    if df is None or df.empty:
+                        continue
+
+                    close = df["close"].reset_index(drop=True)
+                    if len(close) < self.TB_LOOKBACK + self.TB_MAX_HOLDING:
+                        continue  # not enough data yet
+
+                    # Find the bar closest to entry time
+                    target_ts = pd.Timestamp(signal_time)
+                    idx = df.index.get_indexer([target_ts], method="nearest")[0]
+                    if idx < 0 or idx >= len(close):
+                        continue
+
+                    # Need at least max_holding bars after entry
+                    if idx + self.TB_MAX_HOLDING >= len(close):
+                        continue
+
+                    # Compute dynamic barriers from volatility
+                    upper, lower = self.compute_dynamic_barriers(
+                        close, idx,
+                        atr_multiplier=self.TB_ATR_MULTIPLIER,
+                        lookback=self.TB_LOOKBACK,
+                    )
+
+                    # Run triple-barrier labeling
+                    tb = self.triple_barrier_label(
+                        close, idx, upper, lower, self.TB_MAX_HOLDING
+                    )
+
+                    # For SELL/SHORT signals, flip the label
+                    direction = row["signal_type"]
+                    if direction not in ("BUY", "STRONG_BUY"):
+                        tb["label"] = -tb["label"]
+                        tb["return_pct"] = -tb["return_pct"]
+
+                    conn.execute(
+                        """UPDATE signals
+                           SET tb_label = ?, tb_exit_type = ?,
+                               tb_holding_bars = ?, tb_return = ?
+                           WHERE id = ?""",
+                        (tb["label"], tb["exit_type"],
+                         tb["holding_bars"], tb["return_pct"],
+                         signal_id),
+                    )
+
+                except Exception as e:
+                    logger.error(f"Triple-barrier labeling error for signal {row['id']}: {e}")
 
             conn.commit()
 

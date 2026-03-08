@@ -31,10 +31,17 @@ class FactorModelStrategy(BaseStrategy):
             allocation_pct=allocation_pct,
             max_positions=10,  # Diversified portfolio
         )
-        # Factor weights
+        # Factor weights (base — adjusted dynamically by regime)
         self.value_weight = 0.35
         self.quality_weight = 0.30
         self.momentum_weight = 0.35
+
+        # Quality tilt when VIX > 25 (risk-off: quality outperforms)
+        self._quality_tilt_weights = {
+            "value": 0.25,
+            "quality": 0.50,  # Double quality weight in risk-off
+            "momentum": 0.25,
+        }
 
         # Rebalance tracking
         self._last_rebalance = None
@@ -43,6 +50,9 @@ class FactorModelStrategy(BaseStrategy):
     async def generate_signals(self, data_engine, current_positions: List[dict]) -> List[TradeSignal]:
         """Score all stocks and generate signals for top quintile."""
         from config.instruments import US_EQUITIES, EU_EQUITIES
+
+        # Quality factor tilt: detect high-vol regime from universe data
+        self._apply_regime_tilt(data_engine)
 
         universe = {**US_EQUITIES, **EU_EQUITIES}
         scored_stocks = []
@@ -84,6 +94,24 @@ class FactorModelStrategy(BaseStrategy):
 
         # Rank and select top quintile
         return self._rank_and_select(scored_stocks)
+
+    def _apply_regime_tilt(self, data_engine):
+        """Tilt factor weights toward quality when volatility is high (VIX > 25)."""
+        try:
+            # Check if regime detector flagged high vol
+            vol_regime = getattr(data_engine, '_last_vol_regime', None)
+            if vol_regime in ("high", "extreme"):
+                self.value_weight = self._quality_tilt_weights["value"]
+                self.quality_weight = self._quality_tilt_weights["quality"]
+                self.momentum_weight = self._quality_tilt_weights["momentum"]
+                logger.info("Quality tilt active: risk-off regime detected")
+            else:
+                # Reset to defaults
+                self.value_weight = 0.35
+                self.quality_weight = 0.30
+                self.momentum_weight = 0.35
+        except Exception:
+            pass  # Use default weights on error
 
     def _get_fundamentals(self, symbol: str, data_engine) -> dict:
         """Fetch fundamental data for factor scoring."""

@@ -198,6 +198,49 @@ class AlphaDesk:
             + ", ".join(f"{k}={v:.0%}" for k, v in adjusted.items())
         )
 
+    def _apply_ic_weighting(self):
+        """
+        Refine strategy allocations using rolling 60-day Information Coefficient.
+        IC = correlation between predicted signal confidence and actual outcome.
+        Strategies with higher IC get more allocation (proportional tilt).
+        """
+        name_map = {s.name: s for s in self.strategies}
+        ic_scores = {}
+
+        for strategy_name in name_map:
+            perf = self.db.get_strategy_performance(strategy_name, days=60)
+            if perf["trades"] < 10:
+                ic_scores[strategy_name] = 0.5  # Neutral IC when insufficient data
+                continue
+
+            # Use Sharpe as IC proxy (correlation of signal → outcome)
+            sharpe = perf.get("sharpe", 0)
+            # Map Sharpe to 0-1 IC: Sharpe=0→0.5, Sharpe=1→0.75, Sharpe=-1→0.25
+            ic = 0.5 + 0.25 * max(-1, min(1, sharpe))
+            ic_scores[strategy_name] = ic
+
+        # Only tilt if we have meaningful IC dispersion
+        ic_values = list(ic_scores.values())
+        if max(ic_values) - min(ic_values) < 0.1:
+            return  # All strategies have similar IC, skip tilt
+
+        # IC-weighted tilt: multiply current allocation by IC, renormalize
+        total = 0
+        new_alloc = {}
+        for name, strategy in name_map.items():
+            ic = ic_scores.get(name, 0.5)
+            new_alloc[name] = strategy.allocation_pct * ic
+            total += new_alloc[name]
+
+        if total > 0:
+            for name in new_alloc:
+                name_map[name].allocation_pct = new_alloc[name] / total
+
+            logger.info(
+                f"IC-weighted allocations: "
+                + ", ".join(f"{k}={name_map[k].allocation_pct:.0%}" for k in new_alloc)
+            )
+
     # ────────────────────── Main Cycle ──────────────────────
 
     async def run_signal_scan(self):
@@ -220,7 +263,11 @@ class AlphaDesk:
 
         # 2. Detect regime and adjust strategy allocations
         await self.detect_regime()
+        # Pass vol regime to data_engine for factor model quality tilt
+        if self._current_regime:
+            self.data_engine._last_vol_regime = self._current_regime.data.get("volatility_regime")
         self._apply_regime_allocations()
+        self._apply_ic_weighting()
 
         # 3. Check exits on existing positions
         await self._check_exits()

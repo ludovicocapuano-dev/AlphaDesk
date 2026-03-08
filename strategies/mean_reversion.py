@@ -60,6 +60,10 @@ class MeanReversionStrategy(BaseStrategy):
         pairs_signals = await self._scan_pairs(data_engine)
         signals.extend(pairs_signals)
 
+        # 3. PCA stat-arb (Chan)
+        pca_signals = await self._scan_pca_statarb(data_engine)
+        signals.extend(pca_signals)
+
         return self.filter_signals(signals, min_confidence=0.55, min_rr_ratio=1.2)
 
     async def _scan_single_name(self, data_engine) -> List[TradeSignal]:
@@ -275,6 +279,114 @@ class MeanReversionStrategy(BaseStrategy):
                 "coint_pvalue": coint_pvalue,
             },
         )
+
+    async def _scan_pca_statarb(self, data_engine) -> List[TradeSignal]:
+        """
+        PCA Statistical Arbitrage (Chan).
+
+        Fits PCA on sector returns to extract common factors, then
+        computes residuals (idiosyncratic component). Stocks whose
+        residuals deviate significantly from zero are mispriced
+        relative to their factor exposure.
+        """
+        from config.instruments import US_EQUITIES
+
+        signals = []
+        returns_dict = {}
+        price_dict = {}
+
+        for symbol, meta in US_EQUITIES.items():
+            instrument_id = meta.get("etoro_id")
+            if instrument_id is None:
+                continue
+            try:
+                df = await data_engine.get_ohlcv(instrument_id, symbol, "OneDay", 120)
+                if df.empty or len(df) < 60:
+                    continue
+                df = data_engine.compute_indicators(df)
+                returns_dict[symbol] = df["close"].pct_change().dropna().tail(60)
+                price_dict[symbol] = df
+            except Exception:
+                continue
+
+        if len(returns_dict) < 5:
+            return signals
+
+        returns_df = pd.DataFrame(returns_dict).dropna()
+        if len(returns_df) < 30 or returns_df.shape[1] < 5:
+            return signals
+
+        try:
+            # Standardize returns
+            means = returns_df.mean()
+            stds = returns_df.std().replace(0, 1)
+            standardized = (returns_df - means) / stds
+
+            # PCA via SVD — keep top 3 components
+            U, S, Vt = np.linalg.svd(standardized.values, full_matrices=False)
+            n_components = min(3, len(S))
+            factors = U[:, :n_components] * S[:n_components]
+            loadings = Vt[:n_components, :]
+
+            # Reconstruct and compute residuals
+            reconstructed = factors @ loadings
+            residuals = standardized.values - reconstructed
+
+            # Z-score of latest residual for each stock
+            residual_series = pd.DataFrame(
+                residuals, index=returns_df.index, columns=returns_df.columns
+            )
+            latest_residuals = residual_series.iloc[-1]
+            residual_std = residual_series.std()
+
+            for symbol in returns_df.columns:
+                z = latest_residuals[symbol] / max(residual_std[symbol], 0.01)
+
+                if abs(z) < 2.0:
+                    continue  # Not enough deviation
+
+                if symbol not in price_dict:
+                    continue
+
+                df = price_dict[symbol]
+                latest = df.iloc[-1]
+                entry = latest["close"]
+                atr = latest.get("atr", entry * 0.02)
+                instrument_id = US_EQUITIES[symbol].get("etoro_id", 0)
+
+                if z < -2.0:  # Underpriced relative to factors → BUY
+                    stop_loss = entry - 1.5 * atr
+                    take_profit = entry + 2.0 * atr
+                    direction = Signal.BUY
+                else:  # Overpriced → SELL
+                    stop_loss = entry + 1.5 * atr
+                    take_profit = entry - 2.0 * atr
+                    direction = Signal.SELL
+
+                confidence = min(0.85, 0.4 + abs(z) * 0.1)
+
+                signals.append(TradeSignal(
+                    symbol=symbol,
+                    instrument_id=instrument_id,
+                    signal=direction,
+                    strategy_name=self.name,
+                    confidence=confidence,
+                    entry_price=entry,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    suggested_size_pct=min(0.03, confidence * 0.04),
+                    metadata={
+                        "type": "pca_statarb",
+                        "pca_zscore": float(z),
+                        "n_components": n_components,
+                        "variance_explained": float(sum(S[:n_components]**2) / sum(S**2)),
+                    },
+                ))
+
+        except Exception as e:
+            logger.error(f"PCA stat-arb error: {e}")
+
+        return signals
 
     def _mr_confidence(self, zscore: float, rsi: float,
                         df: pd.DataFrame, direction: str) -> float:

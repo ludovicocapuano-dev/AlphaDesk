@@ -345,6 +345,130 @@ class DataEngine:
 
         return pd.DataFrame(denoised_cov, index=cov.index, columns=cov.columns)
 
+    # ────────────────────── SADF Structural Break Detection ──────────────────────
+
+    @staticmethod
+    def _adf_tstat(y: np.ndarray, max_lags: int = 1) -> float:
+        """
+        Compute the ADF t-statistic for a single window using OLS.
+
+        Regression: Δy = α + β·y[t-1] + Σ(γ_i·Δy[t-i]) + ε
+        Returns the t-stat of β (the coefficient on y[t-1]).
+        """
+        dy = np.diff(y)  # Δy, length n-1
+        n = len(dy)
+        if n < max_lags + 2:
+            return np.nan
+
+        # Dependent variable: Δy[max_lags:]
+        dep = dy[max_lags:]
+        T = len(dep)
+
+        # Regressors: intercept, y[t-1], lagged Δy
+        y_lag = y[max_lags:-1]  # y[t-1] aligned with dep
+        cols = [np.ones(T), y_lag]
+        for lag in range(1, max_lags + 1):
+            cols.append(dy[max_lags - lag: -lag] if lag < len(dy) - max_lags + 1
+                        else dy[max_lags - lag: n - lag])
+
+        X = np.column_stack(cols)
+
+        # OLS: β = (X'X)^{-1} X'y
+        try:
+            XtX_inv = np.linalg.inv(X.T @ X)
+        except np.linalg.LinAlgError:
+            return np.nan
+
+        beta = XtX_inv @ (X.T @ dep)
+        residuals = dep - X @ beta
+        sigma2 = np.sum(residuals ** 2) / max(T - X.shape[1], 1)
+        se = np.sqrt(np.diag(XtX_inv) * sigma2)
+
+        if se[1] == 0:
+            return np.nan
+        return beta[1] / se[1]
+
+    @staticmethod
+    def sadf_test(log_prices: pd.Series, min_window: int = 40,
+                  max_lags: int = 1) -> pd.Series:
+        """
+        Supremum ADF test for structural breaks / bubble detection
+        (López de Prado, AFML Ch. 17 / Phillips, Shi, Yu 2015).
+
+        Runs a sequence of ADF tests on expanding windows, starting from
+        min_window observations. The supremum of the ADF t-statistics
+        at each time point indicates explosive behavior (bubbles).
+
+        SADF > critical value → evidence of a bubble/structural break.
+        Critical values (95%): ~1.0 for T=100, ~1.5 for T=200.
+
+        Args:
+            log_prices: Log of price series.
+            min_window: Minimum window size for the first ADF test.
+            max_lags: Maximum number of lags in the ADF regression.
+
+        Returns:
+            Series of SADF statistics indexed by date. Higher values
+            indicate more evidence of explosive (bubble) behavior.
+        """
+        values = log_prices.values.astype(float)
+        index = log_prices.index
+        n = len(values)
+
+        if n < min_window + 2:
+            return pd.Series(dtype=float)
+
+        sadf_stats = {}
+
+        for t in range(min_window, n):
+            # Generate at most 5 evenly spaced starting points
+            num_starts = min(5, t - min_window + 1)
+            start_indices = np.linspace(0, t - min_window, num_starts, dtype=int)
+            # Deduplicate (linspace can produce repeats for small ranges)
+            start_indices = np.unique(start_indices)
+
+            sup_adf = -np.inf
+            for s in start_indices:
+                window = values[s: t + 1]
+                if len(window) < min_window:
+                    continue
+                adf_stat = DataEngine._adf_tstat(window, max_lags)
+                if not np.isnan(adf_stat) and adf_stat > sup_adf:
+                    sup_adf = adf_stat
+
+            if sup_adf > -np.inf:
+                sadf_stats[index[t]] = sup_adf
+
+        return pd.Series(sadf_stats, dtype=float)
+
+    @staticmethod
+    def detect_bubbles(close: pd.Series, min_window: int = 40,
+                       threshold: float = 1.0) -> pd.DataFrame:
+        """
+        Detect bubble periods using SADF.
+
+        Computes SADF on the log of the close price series and flags
+        time points where the SADF statistic exceeds the threshold
+        as bubble regimes.
+
+        Args:
+            close: Price series (not log — log is taken internally).
+            min_window: Minimum window for the SADF test.
+            threshold: SADF threshold above which a bubble is flagged.
+                       Typical 95% critical values: ~1.0 (T=100), ~1.5 (T=200).
+
+        Returns:
+            DataFrame with columns: sadf_stat, is_bubble.
+        """
+        log_prices = np.log(close.replace(0, np.nan).dropna())
+        sadf = DataEngine.sadf_test(log_prices, min_window=min_window)
+
+        result = pd.DataFrame({
+            "sadf_stat": sadf,
+            "is_bubble": sadf > threshold,
+        })
+        return result
+
     # ────────────────────── Cache Management ──────────────────────
 
     def clear_cache(self):
