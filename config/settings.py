@@ -8,6 +8,21 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Load .env file if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # Fallback: manually load .env if dotenv not installed
+    _env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if os.path.exists(_env_path):
+        with open(_env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, value = line.partition("=")
+                    os.environ.setdefault(key.strip(), value.strip())
+
 
 @dataclass
 class EtoroConfig:
