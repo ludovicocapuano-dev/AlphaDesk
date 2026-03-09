@@ -73,10 +73,42 @@ class TradeDB:
                     metadata TEXT
                 );
 
+                -- Local position state: persists across restarts
+                CREATE TABLE IF NOT EXISTS positions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    etoro_position_id TEXT UNIQUE,
+                    symbol TEXT NOT NULL,
+                    instrument_id INTEGER,
+                    strategy TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    amount REAL NOT NULL,
+                    entry_price REAL,
+                    open_rate REAL,
+                    stop_loss REAL,
+                    take_profit REAL,
+                    open_time TEXT NOT NULL,
+                    status TEXT DEFAULT 'open',
+                    close_time TEXT,
+                    pnl REAL,
+                    metadata TEXT
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp);
-                CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
                 CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy);
+                CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
+                CREATE INDEX IF NOT EXISTS idx_positions_etoro_id ON positions(etoro_position_id);
             """)
+
+            # Migration: add columns to trades table if missing (old schema compat)
+            for col, default in [("status", "'open'"), ("etoro_position_id", "NULL")]:
+                try:
+                    conn.execute(f"SELECT {col} FROM trades LIMIT 1")
+                except sqlite3.OperationalError:
+                    conn.execute(f"ALTER TABLE trades ADD COLUMN {col} TEXT DEFAULT {default}")
+                    logger.info(f"Migrated trades table: added {col} column")
+
+            # Create index on status only after migration
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
         logger.info(f"Database initialized: {self.db_path}")
 
     def log_signal(self, signal) -> int:
@@ -163,6 +195,127 @@ class TradeDB:
                     json.dumps(summary.get("strategy_exposures", {})),
                 ),
             )
+
+    # ────────────────────── Position Persistence ──────────────────────
+
+    def save_position(self, position_data: dict) -> int:
+        """Save or update a locally tracked position."""
+        etoro_id = position_data.get("etoro_position_id")
+        with sqlite3.connect(self.db_path) as conn:
+            # Upsert: update if etoro_position_id exists, insert otherwise
+            if etoro_id:
+                existing = conn.execute(
+                    "SELECT id FROM positions WHERE etoro_position_id = ?", (etoro_id,)
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        """UPDATE positions SET
+                           amount = ?, open_rate = ?, stop_loss = ?, take_profit = ?,
+                           metadata = ?
+                           WHERE etoro_position_id = ?""",
+                        (
+                            position_data.get("amount"),
+                            position_data.get("open_rate"),
+                            position_data.get("stop_loss"),
+                            position_data.get("take_profit"),
+                            json.dumps(position_data.get("metadata", {})),
+                            etoro_id,
+                        ),
+                    )
+                    return existing[0]
+
+            cursor = conn.execute(
+                """INSERT INTO positions
+                   (etoro_position_id, symbol, instrument_id, strategy, direction,
+                    amount, entry_price, open_rate, stop_loss, take_profit,
+                    open_time, status, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)""",
+                (
+                    etoro_id,
+                    position_data["symbol"],
+                    position_data.get("instrument_id"),
+                    position_data["strategy"],
+                    position_data["direction"],
+                    position_data["amount"],
+                    position_data.get("entry_price"),
+                    position_data.get("open_rate"),
+                    position_data.get("stop_loss"),
+                    position_data.get("take_profit"),
+                    position_data.get("open_time", datetime.utcnow().isoformat()),
+                    json.dumps(position_data.get("metadata", {})),
+                ),
+            )
+            return cursor.lastrowid
+
+    def close_position(self, etoro_position_id: str, pnl: float = None):
+        """Mark a position as closed."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """UPDATE positions SET status = 'closed', close_time = ?, pnl = ?
+                   WHERE etoro_position_id = ?""",
+                (datetime.utcnow().isoformat(), pnl, str(etoro_position_id)),
+            )
+
+    def get_open_positions(self) -> List[dict]:
+        """Load all locally tracked open positions."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM positions WHERE status = 'open'"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_strategy_for_position(self, etoro_position_id: str) -> Optional[str]:
+        """Look up which strategy opened a position."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT strategy FROM positions WHERE etoro_position_id = ?",
+                (str(etoro_position_id),),
+            ).fetchone()
+            return row[0] if row else None
+
+    def reconcile_positions(self, etoro_positions: List[dict]) -> dict:
+        """
+        Reconcile local DB with eToro API positions.
+        - Marks closed positions that are no longer in eToro
+        - Enriches eToro positions with strategy tags from DB
+        Returns: {"enriched": [...], "closed_stale": int, "unknown": int}
+        """
+        local_open = {
+            str(p["etoro_position_id"]): p
+            for p in self.get_open_positions()
+            if p.get("etoro_position_id")
+        }
+
+        etoro_ids = set()
+        enriched = []
+        unknown = 0
+
+        for pos in etoro_positions:
+            pos_id = str(pos.get("positionID", pos.get("positionId", "")))
+            etoro_ids.add(pos_id)
+
+            if pos_id in local_open:
+                # Enrich with local data (strategy, etc.)
+                local = local_open[pos_id]
+                pos["strategy_tag"] = local["strategy"]
+                pos["local_id"] = local["id"]
+            else:
+                # Position opened outside our system (manual trade)
+                pos["strategy_tag"] = "manual"
+                unknown += 1
+
+            enriched.append(pos)
+
+        # Mark positions that are in DB but no longer in eToro as closed
+        closed_stale = 0
+        for local_id, local_pos in local_open.items():
+            if local_id not in etoro_ids:
+                self.close_position(local_id)
+                closed_stale += 1
+                logger.info(f"Position {local_pos['symbol']} (eToro {local_id}) closed externally")
+
+        return {"enriched": enriched, "closed_stale": closed_stale, "unknown": unknown}
 
     def get_strategy_performance(self, strategy: str, days: int = 90) -> dict:
         """Get historical performance for a strategy (for Kelly sizing)."""

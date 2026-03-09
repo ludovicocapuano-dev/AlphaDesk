@@ -124,12 +124,20 @@ class AlphaDesk:
         logger.info("=" * 60)
 
     async def update_portfolio_state(self):
-        """Refresh portfolio state from eToro."""
+        """Refresh portfolio state from eToro, with local DB fallback."""
         try:
             portfolio = await self.etoro.get_portfolio()
             cp = portfolio.get("clientPortfolio", portfolio)
             positions = cp.get("positions", [])
             credit = cp.get("credit", 0)
+
+            # Reconcile eToro positions with local DB (enriches with strategy tags)
+            reconciliation = self.db.reconcile_positions(positions)
+            positions = reconciliation["enriched"]
+            if reconciliation["closed_stale"]:
+                logger.info(f"Reconciled: {reconciliation['closed_stale']} positions closed externally")
+            if reconciliation["unknown"]:
+                logger.info(f"Reconciled: {reconciliation['unknown']} positions not tracked (manual trades)")
 
             # Build balance dict for risk manager
             total_invested = sum(p.get("initialAmountInDollars", 0) for p in positions)
@@ -146,7 +154,57 @@ class AlphaDesk:
                 f"positions={len(positions)}"
             )
         except Exception as e:
-            logger.error(f"Failed to update portfolio state: {e}")
+            logger.warning(f"eToro API unavailable: {e} — loading positions from local DB")
+            self._load_positions_from_db()
+
+    def _load_positions_from_db(self):
+        """Fallback: load last known positions from local DB when eToro API is down."""
+        local_positions = self.db.get_open_positions()
+        if not local_positions:
+            logger.info("No locally tracked positions found")
+            return
+
+        # Convert DB rows to eToro-like position dicts for risk manager
+        positions = []
+        for p in local_positions:
+            positions.append({
+                "positionID": p.get("etoro_position_id"),
+                "instrumentId": p.get("instrument_id"),
+                "symbol": p.get("symbol", ""),
+                "strategy_tag": p.get("strategy", "unknown"),
+                "direction": p.get("direction", "Buy"),
+                "investedAmount": p.get("amount", 0),
+                "initialAmountInDollars": p.get("amount", 0),
+                "openRate": p.get("open_rate") or p.get("entry_price", 0),
+                "stopLossRate": p.get("stop_loss"),
+                "takeProfitRate": p.get("take_profit"),
+            })
+
+        # Use last known equity from daily snapshot
+        import sqlite3
+        equity = 0
+        cash = 0
+        try:
+            with sqlite3.connect(self.db.db_path) as conn:
+                row = conn.execute(
+                    "SELECT equity, cash FROM daily_snapshots ORDER BY date DESC LIMIT 1"
+                ).fetchone()
+                if row:
+                    equity = row[0] or 0
+                    cash = row[1] or 0
+        except Exception:
+            pass
+
+        if equity == 0:
+            total_invested = sum(p["investedAmount"] for p in positions)
+            equity = total_invested + cash
+
+        balance = {"cash": cash, "equity": equity, "invested": equity - cash}
+        self.risk_manager.update_state(balance, positions)
+        logger.info(
+            f"Portfolio (from DB fallback): equity=${equity:,.2f}, "
+            f"cash=${cash:.2f}, positions={len(positions)}"
+        )
 
     # ────────────────────── Regime Detection ──────────────────────
 
@@ -429,6 +487,7 @@ class AlphaDesk:
                 )
 
                 # Log trade
+                etoro_pos_id = result.get("positionId") or result.get("positionID")
                 fill_price = result.get("entryPrice", signal.entry_price)
                 shortfall = (fill_price - signal.entry_price) / signal.entry_price if signal.entry_price else 0.0
                 self.db.log_trade_open(signal_id, {
@@ -439,8 +498,22 @@ class AlphaDesk:
                     "entry_price": signal.entry_price,
                     "stop_loss": signal.stop_loss,
                     "take_profit": signal.take_profit,
-                    "etoro_position_id": result.get("positionId"),
+                    "etoro_position_id": etoro_pos_id,
                     "shortfall": shortfall,
+                })
+
+                # Persist position locally for restart recovery
+                self.db.save_position({
+                    "etoro_position_id": etoro_pos_id,
+                    "symbol": signal.symbol,
+                    "instrument_id": signal.instrument_id,
+                    "strategy": signal.strategy_name,
+                    "direction": signal.direction,
+                    "amount": sizing["dollar_amount"],
+                    "entry_price": signal.entry_price,
+                    "open_rate": fill_price,
+                    "stop_loss": signal.stop_loss,
+                    "take_profit": signal.take_profit,
                 })
 
                 # Notify
@@ -545,6 +618,11 @@ class AlphaDesk:
                         pos_id = position.get("positionID", position.get("positionId"))
                         inst_id = position.get("instrumentID", position.get("instrumentId"))
                         await self.etoro.close_position(pos_id, inst_id)
+
+                        # Mark closed in local DB
+                        if pos_id:
+                            self.db.close_position(str(pos_id))
+
                         logger.info(
                             f"🔴 EXIT: {symbol} | {exit_signal.metadata.get('exit_reason', '')}"
                         )
@@ -589,6 +667,8 @@ class AlphaDesk:
                         pos_id = pos.get("positionID", pos.get("positionId"))
                         inst_id = pos.get("instrumentID", pos.get("instrumentId"))
                         await self.etoro.close_position(pos_id, inst_id)
+                        if pos_id:
+                            self.db.close_position(str(pos_id))
                     except Exception as e:
                         logger.error(f"Failed to close {pos.get('symbol', pos_id)}: {e}")
 
