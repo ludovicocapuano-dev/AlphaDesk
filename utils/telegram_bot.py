@@ -214,7 +214,7 @@ class TelegramBot:
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"💰 Equity: <b>${state.equity:,.2f}</b>\n"
                 f"💵 Cash: ${state.cash:,.2f}\n"
-                f"📊 Invested: ${state.invested:,.2f}\n"
+                f"📊 Invested: ${summary.get('total_invested', state.equity - state.cash):,.2f}\n"
                 f"📈 Positions: {len(state.positions)}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{dd_emoji} Drawdown: {dd_pct:.1%} (Level {dd_level})\n"
