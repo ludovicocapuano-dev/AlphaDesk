@@ -139,12 +139,34 @@ class AlphaDesk:
             if reconciliation["unknown"]:
                 logger.info(f"Reconciled: {reconciliation['unknown']} positions not tracked (manual trades)")
 
+            # Include PnL for accurate equity calculation
+            try:
+                pnl_data = await self.etoro.get_pnl()
+                pnl_cp = pnl_data.get("clientPortfolio", pnl_data)
+                unrealized_pnl = pnl_cp.get("unrealizedPnL", 0)
+            except Exception:
+                unrealized_pnl = 0
+
+            # Include mirror (copy trading) available cash
+            mirrors = cp.get("mirrors", [])
+            mirror_cash = sum(m.get("availableAmount", 0) for m in mirrors)
+
+            # EUR wallet: eToro API only returns USD credit, but account may have
+            # EUR funds not visible via API. Read from env/config as override.
+            eur_balance = float(os.getenv("ETORO_EUR_BALANCE", "0"))
+            eur_usd_rate = float(os.getenv("ETORO_EUR_USD_RATE", "1.085"))
+            eur_in_usd = eur_balance * eur_usd_rate
+
             # Build balance dict for risk manager
             total_invested = sum(p.get("initialAmountInDollars", 0) for p in positions)
+            total_cash = credit + mirror_cash + eur_in_usd
             balance = {
-                "cash": credit,
-                "equity": credit + total_invested,
+                "cash": total_cash,
+                "equity": total_cash + total_invested + unrealized_pnl,
                 "invested": total_invested,
+                "credit_usd": credit,
+                "eur_balance": eur_balance,
+                "unrealized_pnl": unrealized_pnl,
             }
 
             self.risk_manager.update_state(balance, positions)
