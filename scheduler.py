@@ -113,6 +113,21 @@ class AlphaDeskScheduler:
             name="Data Refresh",
         )
 
+        # ── Weekly Rebalance Check (Sunday 18:00 UTC — before Monday open) ──
+        # TODO: Add weekly rebalance check here:
+        #   self.scheduler.add_job(
+        #       self._safe_run(self._weekly_rebalance_check),
+        #       CronTrigger(day_of_week="sun", hour=18, minute=0),
+        #       id="weekly_rebalance",
+        #       name="Weekly Rebalance Check",
+        #   )
+        # Implement _weekly_rebalance_check() to call:
+        #   from risk.portfolio_rebalancer import PortfolioRebalancer
+        #   rebalancer = PortfolioRebalancer()
+        #   report = rebalancer.analyze(equity, cash, positions)
+        #   msg = PortfolioRebalancer.format_telegram(report)
+        #   await self.desk.notifier.send(msg)
+
         # ── Weekend Maintenance (Saturday 06:00 UTC) ──
         self.scheduler.add_job(
             self._safe_run(self._weekend_maintenance),

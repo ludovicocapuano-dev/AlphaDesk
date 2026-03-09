@@ -58,13 +58,14 @@ class FXCarryStrategy(BaseStrategy):
             allocation_pct=allocation_pct,
             max_positions=6,
         )
-        # Parameters
-        self.min_carry_spread = 0.01     # Min 1% rate differential
-        self.momentum_weight = 0.40      # Momentum contribution to score
-        self.carry_weight = 0.60         # Carry contribution to score
-        self.max_risk_per_pair = 0.015   # 1.5% max risk per pair
+        # Parameters (optimized 2026-03-08, backtest 2023-2025)
+        self.min_carry_spread = 0.005    # Min 0.5% rate differential
+        self.momentum_weight = 0.70      # Momentum contribution to score
+        self.carry_weight = 0.30         # Carry contribution to score
+        self.max_risk_per_pair = 0.025   # 2.5% max risk per pair
         self.trend_filter_sma = 50       # SMA for trend direction
-        self.atr_stop_multiplier = 1.5   # Stop at 1.5x ATR
+        self.atr_stop_multiplier = 2.0   # Stop at 2.0x ATR
+        self.tp_multiplier = 2.0         # Take profit at 2.0x stop distance
 
     async def generate_signals(self, data_engine, current_positions: List[dict]) -> List[TradeSignal]:
         """Score FX pairs by carry + momentum and generate signals."""
@@ -191,7 +192,7 @@ class FXCarryStrategy(BaseStrategy):
             return None
 
         composite = score_data["composite_score"]
-        if abs(composite) < 0.05:
+        if abs(composite) < 0.08:
             return None
 
         latest = df.iloc[-1]
@@ -203,11 +204,11 @@ class FXCarryStrategy(BaseStrategy):
         if composite > 0:
             direction = Signal.BUY if composite < 0.15 else Signal.STRONG_BUY
             stop_loss = entry - (self.atr_stop_multiplier * atr)
-            take_profit = entry + (2.5 * self.atr_stop_multiplier * atr)
+            take_profit = entry + (self.tp_multiplier * self.atr_stop_multiplier * atr)
         else:
             direction = Signal.SELL if abs(composite) < 0.15 else Signal.STRONG_SELL
             stop_loss = entry + (self.atr_stop_multiplier * atr)
-            take_profit = entry - (2.5 * self.atr_stop_multiplier * atr)
+            take_profit = entry - (self.tp_multiplier * self.atr_stop_multiplier * atr)
 
         confidence = min(0.90, 0.4 + abs(composite) * 0.3)
         if score_data["trend_aligned"]:
@@ -239,7 +240,7 @@ class FXCarryStrategy(BaseStrategy):
             latest = df.iloc[-1]
             composite = pair_data["composite_score"]
 
-            if abs(composite) < 0.05:
+            if abs(composite) < 0.08:
                 continue  # Not enough edge
 
             # Direction based on composite score
@@ -253,10 +254,10 @@ class FXCarryStrategy(BaseStrategy):
 
             if direction == Signal.BUY:
                 stop_loss = entry - (self.atr_stop_multiplier * atr)
-                take_profit = entry + (2.5 * self.atr_stop_multiplier * atr)
+                take_profit = entry + (self.tp_multiplier * self.atr_stop_multiplier * atr)
             else:
                 stop_loss = entry + (self.atr_stop_multiplier * atr)
-                take_profit = entry - (2.5 * self.atr_stop_multiplier * atr)
+                take_profit = entry - (self.tp_multiplier * self.atr_stop_multiplier * atr)
 
             # Confidence based on score magnitude and trend alignment
             confidence = min(0.90, 0.4 + abs(composite) * 0.3)

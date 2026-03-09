@@ -10,6 +10,7 @@ Commands:
   /trades      — Recent trade history
   /performance — Strategy performance (30d)
   /ml          — ML ensemble status
+  /rebalance   — Portfolio rebalancing analysis
   /help        — Show available commands
 """
 
@@ -153,6 +154,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("trades", self._cmd_trades))
         self._app.add_handler(CommandHandler("performance", self._cmd_performance))
         self._app.add_handler(CommandHandler("ml", self._cmd_ml))
+        self._app.add_handler(CommandHandler("rebalance", self._cmd_rebalance))
 
         logger.info("Telegram bot starting polling...")
         await self._app.initialize()
@@ -184,6 +186,7 @@ class TelegramBot:
             "/trades — Recent trade history\n"
             "/performance — Strategy stats (30d)\n"
             "/ml — ML ensemble status\n"
+            "/rebalance — Rebalancing analysis\n"
             "/help — This message"
         )
         await update.message.reply_text(msg, parse_mode="HTML")
@@ -578,6 +581,48 @@ class TelegramBot:
             )
 
             await update.message.reply_text(msg, parse_mode="HTML")
+
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+
+    async def _cmd_rebalance(self, update, context):
+        """Portfolio rebalancing analysis."""
+        if not self._is_authorized(update.effective_chat.id):
+            return
+        await update.message.reply_text("⏳ Running rebalance analysis...")
+
+        try:
+            from risk.portfolio_rebalancer import PortfolioRebalancer
+
+            await self.desk.update_portfolio_state()
+            state = self.desk.risk_manager.state
+
+            rebalancer = PortfolioRebalancer()
+            report = rebalancer.analyze(
+                equity=state.equity,
+                cash=state.cash,
+                positions=state.positions,
+            )
+
+            msg = PortfolioRebalancer.format_telegram(report)
+
+            # Telegram messages have a 4096-char limit; split if needed
+            if len(msg) <= 4096:
+                await update.message.reply_text(msg, parse_mode="HTML")
+            else:
+                # Send in chunks at line boundaries
+                chunks = []
+                current = ""
+                for line in msg.split("\n"):
+                    if len(current) + len(line) + 1 > 4000:
+                        chunks.append(current)
+                        current = line
+                    else:
+                        current = current + "\n" + line if current else line
+                if current:
+                    chunks.append(current)
+                for chunk in chunks:
+                    await update.message.reply_text(chunk, parse_mode="HTML")
 
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")

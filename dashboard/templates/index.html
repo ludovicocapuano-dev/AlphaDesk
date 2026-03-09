@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AlphaDesk — Trading Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --border:    #30363d;
+  --text:      #c9d1d9;
+  --text-dim:  #8b949e;
+  --accent:    #58a6ff;
+  --green:     #3fb950;
+  --red:       #f85149;
+  --yellow:    #d29922;
+  --orange:    #db6d28;
+}
+body {
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+a { color: var(--accent); text-decoration: none; }
+
+/* ── Layout ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.header h1 { font-size: 16px; font-weight: 600; letter-spacing: 1px; }
+.header .meta { color: var(--text-dim); font-size: 11px; }
+.header .status-dot {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--green); margin-right: 6px;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  padding: 16px 24px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.card h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.card.wide { grid-column: span 2; }
+
+/* ── Summary Cards ── */
+.summary-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  padding: 0 24px 0 24px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  text-align: center;
+}
+.stat-card .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); }
+.stat-card .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+.stat-card .sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.positive { color: var(--green); }
+.negative { color: var(--red); }
+.neutral  { color: var(--text-dim); }
+
+/* ── Tables ── */
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; color: var(--text-dim); font-weight: 500; padding: 6px 8px;
+     border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+tr:hover td { background: rgba(88,166,255,0.04); }
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+}
+.badge-buy  { background: rgba(63,185,80,0.15); color: var(--green); }
+.badge-sell { background: rgba(248,81,73,0.15); color: var(--red); }
+.badge-ok   { background: rgba(63,185,80,0.15); color: var(--green); }
+.badge-warn { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.badge-err  { background: rgba(248,81,73,0.15); color: var(--red); }
+
+/* ── Regime ── */
+.regime-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.regime-item {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.regime-item .rlabel { font-size: 10px; text-transform: uppercase; color: var(--text-dim); }
+.regime-item .rvalue { font-size: 16px; font-weight: 600; margin-top: 2px; }
+
+/* ── Charts ── */
+.chart-wrap { position: relative; height: 260px; }
+
+/* ── Empty state ── */
+.empty { text-align: center; padding: 30px; color: var(--text-dim); font-style: italic; }
+
+/* ── Footer ── */
+.footer { text-align: center; padding: 12px; color: var(--text-dim); font-size: 10px; border-top: 1px solid var(--border); margin-top: 8px; }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .card.wide { grid-column: span 1; }
+  .summary-row { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>ALPHADESK</h1>
+  <div class="meta">
+    <span class="status-dot"></span>
+    <span id="clock">--</span> &nbsp;|&nbsp; Auto-refresh 60s &nbsp;|&nbsp; DB: connected
+  </div>
+</div>
+
+<!-- Summary Stats -->
+<div style="padding-top:16px">
+  <div class="summary-row" id="summary-row">
+    <div class="stat-card"><div class="label">Equity</div><div class="value" id="s-equity">--</div><div class="sub" id="s-date"></div></div>
+    <div class="stat-card"><div class="label">Cash</div><div class="value" id="s-cash">--</div></div>
+    <div class="stat-card"><div class="label">Positions Value</div><div class="value" id="s-posval">--</div></div>
+    <div class="stat-card"><div class="label">Daily P&amp;L</div><div class="value" id="s-dailypnl">--</div></div>
+    <div class="stat-card"><div class="label">Cumulative P&amp;L</div><div class="value" id="s-cumpnl">--</div></div>
+    <div class="stat-card"><div class="label">Drawdown</div><div class="value" id="s-drawdown">--</div></div>
+  </div>
+</div>
+
+<!-- Main Grid -->
+<div class="grid">
+
+  <!-- Equity Curve -->
+  <div class="card wide">
+    <h2>Equity Curve</h2>
+    <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+    <div class="empty" id="equity-empty" style="display:none">No daily snapshots recorded yet. Run a trading cycle to populate.</div>
+  </div>
+
+  <!-- Drawdown Chart -->
+  <div class="card">
+    <h2>Drawdown</h2>
+    <div class="chart-wrap"><canvas id="drawdownChart"></canvas></div>
+    <div class="empty" id="dd-empty" style="display:none">No drawdown data.</div>
+  </div>
+
+  <!-- Regime Status -->
+  <div class="card">
+    <h2>Market Regime</h2>
+    <div class="regime-grid" id="regime-grid">
+      <div class="regime-item"><div class="rlabel">Volatility</div><div class="rvalue" id="r-vol">--</div></div>
+      <div class="regime-item"><div class="rlabel">Trend</div><div class="rvalue" id="r-trend">--</div></div>
+      <div class="regime-item"><div class="rlabel">VIX</div><div class="rvalue" id="r-vix">--</div></div>
+      <div class="regime-item"><div class="rlabel">Phase</div><div class="rvalue" id="r-phase">--</div></div>
+    </div>
+  </div>
+
+  <!-- Strategy Performance -->
+  <div class="card wide">
+    <h2>Strategy Performance</h2>
+    <table id="strat-table">
+      <thead>
+        <tr>
+          <th>Strategy</th><th>Trades</th><th>Win Rate</th>
+          <th>Return %</th><th>Sharpe</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="strat-body"></tbody>
+    </table>
+    <div class="empty" id="strat-empty" style="display:none">No strategy data.</div>
+  </div>
+
+  <!-- Open Positions -->
+  <div class="card wide">
+    <h2>Open Positions</h2>
+    <table id="pos-table">
+      <thead>
+        <tr>
+          <th>Symbol</th><th>Strategy</th><th>Direction</th>
+          <th>Amount</th><th>Entry</th><th>SL</th><th>TP</th><th>Opened</th>
+        </tr>
+      </thead>
+      <tbody id="pos-body"></tbody>
+    </table>
+    <div class="empty" id="pos-empty" style="display:none">No open positions.</div>
+  </div>
+
+  <!-- Recent Trades -->
+  <div class="card wide">
+    <h2>Recent Trades</h2>
+    <table id="trades-table">
+      <thead>
+        <tr>
+          <th>Symbol</th><th>Strategy</th><th>Dir</th>
+          <th>Amount</th><th>Entry</th><th>Exit</th>
+          <th>P&amp;L</th><th>Time</th>
+        </tr>
+      </thead>
+      <tbody id="trades-body"></tbody>
+    </table>
+    <div class="empty" id="trades-empty" style="display:none">No trades recorded yet.</div>
+  </div>
+
+</div>
+
+<div class="footer">AlphaDesk v2 — Quant Trading System</div>
+
+<script>
+// ── Helpers ──
+const $ = s => document.getElementById(s);
+const fmt = (n, d=2) => n != null ? Number(n).toFixed(d) : '--';
+const fmtUSD = n => n != null ? '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '--';
+const pnlClass = n => n > 0 ? 'positive' : (n < 0 ? 'negative' : 'neutral');
+
+function updateClock() {
+  $('clock').textContent = new Date().toLocaleString('en-US', {hour12:false});
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Chart instances ──
+let equityChart = null;
+let drawdownChart = null;
+
+const chartDefaults = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { labels: { color: '#8b949e', font: { family: 'monospace', size: 11 } } } },
+  scales: {
+    x: { ticks: { color: '#8b949e', font: { size: 10 }, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+    y: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } }
+  }
+};
+
+// ── Load Summary ──
+async function loadSummary() {
+  const d = await fetch('/api/summary').then(r => r.json());
+  $('s-equity').textContent = fmtUSD(d.equity);
+  $('s-equity').className = 'value';
+  $('s-cash').textContent = fmtUSD(d.cash);
+  $('s-posval').textContent = fmtUSD(d.positions_value);
+  $('s-dailypnl').textContent = fmtUSD(d.daily_pnl);
+  $('s-dailypnl').className = 'value ' + pnlClass(d.daily_pnl);
+  $('s-cumpnl').textContent = fmtUSD(d.cumulative_pnl);
+  $('s-cumpnl').className = 'value ' + pnlClass(d.cumulative_pnl);
+  $('s-drawdown').textContent = fmt(d.drawdown * 100, 2) + '%';
+  $('s-drawdown').className = 'value ' + (d.drawdown < -0.05 ? 'negative' : 'neutral');
+  $('s-date').textContent = d.date;
+}
+
+// ── Load Equity Chart ──
+async function loadEquity() {
+  const data = await fetch('/api/equity').then(r => r.json());
+  if (!data.length) { $('equity-empty').style.display = 'block'; return; }
+  $('equity-empty').style.display = 'none';
+
+  const labels = data.map(d => d.date);
+  const equity = data.map(d => d.equity);
+  const cash = data.map(d => d.cash);
+
+  if (equityChart) equityChart.destroy();
+  equityChart = new Chart($('equityChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Equity', data: equity, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)',
+          fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+        { label: 'Cash', data: cash, borderColor: '#8b949e', backgroundColor: 'transparent',
+          borderDash: [4,4], tension: 0.3, pointRadius: 0, borderWidth: 1 }
+      ]
+    },
+    options: { ...chartDefaults }
+  });
+}
+
+// ── Load Drawdown Chart ──
+async function loadDrawdown() {
+  const data = await fetch('/api/drawdown').then(r => r.json());
+  if (!data.length) { $('dd-empty').style.display = 'block'; return; }
+  $('dd-empty').style.display = 'none';
+
+  const labels = data.map(d => d.date);
+  const dd = data.map(d => (d.drawdown || 0) * 100);
+
+  if (drawdownChart) drawdownChart.destroy();
+  drawdownChart = new Chart($('drawdownChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Drawdown %', data: dd,
+        borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.12)',
+        fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2
+      }]
+    },
+    options: { ...chartDefaults,
+      scales: { ...chartDefaults.scales,
+        y: { ...chartDefaults.scales.y, reverse: true,
+          ticks: { ...chartDefaults.scales.y.ticks, callback: v => v.toFixed(1) + '%' } }
+      }
+    }
+  });
+}
+
+// ── Load Regime ──
+async function loadRegime() {
+  const d = await fetch('/api/regime').then(r => r.json());
+  $('r-vol').textContent = d.volatility_regime || '--';
+  $('r-vol').className = 'rvalue ' + (d.volatility_regime === 'low' ? 'positive' : (d.volatility_regime === 'elevated' || d.volatility_regime === 'high' ? 'negative' : ''));
+  $('r-trend').textContent = d.trend_regime || '--';
+  $('r-vix').textContent = fmt(d.vix_level, 1);
+  $('r-vix').className = 'rvalue ' + (d.vix_level > 25 ? 'negative' : (d.vix_level < 18 ? 'positive' : ''));
+  $('r-phase').textContent = d.market_phase || '--';
+  $('r-phase').className = 'rvalue ' + (d.market_phase === 'risk-off' ? 'negative' : (d.market_phase === 'risk-on' ? 'positive' : ''));
+}
+
+// ── Load Strategy Table ──
+async function loadStrategies() {
+  const data = await fetch('/api/strategies').then(r => r.json());
+  if (!data.length) { $('strat-empty').style.display = 'block'; return; }
+  $('strat-empty').style.display = 'none';
+
+  $('strat-body').innerHTML = data.map(s => {
+    const ret = s.return_pct != null ? s.return_pct : (s.avg_return_pct || 0);
+    const sharpe = s.sharpe != null ? fmt(s.sharpe, 2) : '--';
+    const wr = s.win_rate != null ? fmt(s.win_rate, 1) + '%' : '--';
+    const trades = s.trades || s.total_trades || 0;
+    const status = s.status || (ret > 0 ? 'profitable' : (trades === 0 ? 'no trades' : 'loss'));
+    const statusBadge = status.includes('profitable') || status === 'profitable'
+      ? 'badge-ok' : (status.includes('BUG') ? 'badge-err' : 'badge-warn');
+    return `<tr>
+      <td><strong>${s.strategy}</strong></td>
+      <td>${trades}</td>
+      <td>${wr}</td>
+      <td class="${pnlClass(ret)}">${fmt(ret,2)}%</td>
+      <td>${sharpe}</td>
+      <td><span class="badge ${statusBadge}">${status}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Load Positions ──
+async function loadPositions() {
+  const data = await fetch('/api/positions').then(r => r.json());
+  if (!data.length) { $('pos-empty').style.display = 'block'; $('pos-table').querySelector('thead').style.display = 'none'; return; }
+  $('pos-empty').style.display = 'none';
+  $('pos-table').querySelector('thead').style.display = '';
+
+  $('pos-body').innerHTML = data.map(p => `<tr>
+    <td><strong>${p.symbol}</strong></td>
+    <td>${p.strategy || '--'}</td>
+    <td><span class="badge badge-${(p.direction||'').toLowerCase()}">${p.direction}</span></td>
+    <td>${fmt(p.amount, 2)}</td>
+    <td>${fmtUSD(p.entry_price)}</td>
+    <td>${p.stop_loss ? fmtUSD(p.stop_loss) : '--'}</td>
+    <td>${p.take_profit ? fmtUSD(p.take_profit) : '--'}</td>
+    <td>${p.open_time || '--'}</td>
+  </tr>`).join('');
+}
+
+// ── Load Trades ──
+async function loadTrades() {
+  const data = await fetch('/api/trades').then(r => r.json());
+  if (!data.length) { $('trades-empty').style.display = 'block'; $('trades-table').querySelector('thead').style.display = 'none'; return; }
+  $('trades-empty').style.display = 'none';
+  $('trades-table').querySelector('thead').style.display = '';
+
+  $('trades-body').innerHTML = data.map(t => `<tr>
+    <td><strong>${t.symbol}</strong></td>
+    <td>${t.strategy || '--'}</td>
+    <td><span class="badge badge-${(t.direction||'').toLowerCase()}">${t.direction}</span></td>
+    <td>${fmt(t.amount, 2)}</td>
+    <td>${fmtUSD(t.entry_price)}</td>
+    <td>${t.exit_price ? fmtUSD(t.exit_price) : '--'}</td>
+    <td class="${pnlClass(t.pnl)}">${t.pnl != null ? fmtUSD(t.pnl) : '--'}</td>
+    <td>${t.close_time || t.open_time || '--'}</td>
+  </tr>`).join('');
+}
+
+// ── Init & Refresh ──
+async function refresh() {
+  await Promise.all([
+    loadSummary(),
+    loadEquity(),
+    loadDrawdown(),
+    loadRegime(),
+    loadStrategies(),
+    loadPositions(),
+    loadTrades()
+  ]);
+}
+
+refresh();
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>
