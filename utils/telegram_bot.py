@@ -155,6 +155,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("performance", self._cmd_performance))
         self._app.add_handler(CommandHandler("ml", self._cmd_ml))
         self._app.add_handler(CommandHandler("rebalance", self._cmd_rebalance))
+        self._app.add_handler(CommandHandler("set_eur", self._cmd_set_eur))
 
         logger.info("Telegram bot starting polling...")
         await self._app.initialize()
@@ -187,6 +188,7 @@ class TelegramBot:
             "/performance — Strategy stats (30d)\n"
             "/ml — ML ensemble status\n"
             "/rebalance — Rebalancing analysis\n"
+            "/set_eur &lt;amount&gt; — Update EUR wallet balance\n"
             "/help — This message"
         )
         await update.message.reply_text(msg, parse_mode="HTML")
@@ -626,3 +628,48 @@ class TelegramBot:
 
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
+
+    async def _cmd_set_eur(self, update, context):
+        """Update EUR wallet balance. Usage: /set_eur 5000"""
+        if not self._is_authorized(update.effective_chat.id):
+            return
+
+        if not context.args:
+            await update.message.reply_text("Usage: /set_eur <amount>\nExample: /set_eur 5000")
+            return
+
+        try:
+            amount = float(context.args[0].replace(",", "."))
+        except ValueError:
+            await update.message.reply_text("❌ Invalid amount. Use: /set_eur 5000")
+            return
+
+        # Update .env file
+        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+        if os.path.exists(env_path):
+            lines = []
+            found = False
+            with open(env_path) as f:
+                for line in f:
+                    if line.startswith("ETORO_EUR_BALANCE="):
+                        lines.append(f"ETORO_EUR_BALANCE={amount}\n")
+                        found = True
+                    else:
+                        lines.append(line)
+            if not found:
+                lines.append(f"ETORO_EUR_BALANCE={amount}\n")
+            with open(env_path, "w") as f:
+                f.writelines(lines)
+
+        # Update runtime environment
+        os.environ["ETORO_EUR_BALANCE"] = str(amount)
+
+        eur_usd = float(os.getenv("ETORO_EUR_USD_RATE", "1.085"))
+        usd_equiv = amount * eur_usd
+
+        await update.message.reply_text(
+            f"✅ EUR balance updated: €{amount:,.2f}\n"
+            f"USD equivalent: ${usd_equiv:,.2f} (rate {eur_usd})\n"
+            f"Use /status to see updated portfolio."
+        )
+        logger.info(f"EUR balance updated to {amount} via Telegram")
