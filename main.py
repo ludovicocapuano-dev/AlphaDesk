@@ -85,6 +85,20 @@ class AlphaDesk:
         else:
             self.meta_labeler = None
 
+        # AI Agent Manager (optional — needs ANTHROPIC_API_KEY)
+        try:
+            from core.ai_agents import AIPortfolioManager
+            api_key = os.getenv("ANTHROPIC_API_KEY", "")
+            if api_key:
+                self.ai_manager = AIPortfolioManager(db_path=config.db_path)
+                logger.info("AI Agent Manager: ACTIVE")
+            else:
+                self.ai_manager = None
+                logger.info("AI Agent Manager: DISABLED (no ANTHROPIC_API_KEY)")
+        except ImportError:
+            self.ai_manager = None
+            logger.info("AI Agent Manager: DISABLED (module not found)")
+
         # Cache current regime fingerprint
         self._current_regime = None
 
@@ -455,6 +469,40 @@ class AlphaDesk:
                         self._log_signal_with_features(signal, ml_result, regime_data, executed=False)
                         continue
 
+                # ── AI Agent validation (for signals > $200) ──
+                if hasattr(self, 'ai_manager') and self.ai_manager:
+                    # Estimate sizing to decide if AI validation is warranted
+                    asset_type_est = "fx" if signal.strategy_name == "fx_carry" else "equity"
+                    perf_est = self.db.get_strategy_performance(signal.strategy_name)
+                    sizing_estimate = self.position_sizer.compute_trade_size(
+                        self.risk_manager.state.equity, signal, perf_est, asset_type_est
+                    ).get("dollar_amount", 0)
+
+                    if sizing_estimate > 200:
+                        try:
+                            ai_decision = await asyncio.wait_for(
+                                self._run_ai_evaluation(signal, signal_data, regime_data),
+                                timeout=10.0,
+                            )
+                            if not ai_decision.approved:
+                                vetoed += 1
+                                logger.info(
+                                    f"AI VETO: {signal.symbol} — "
+                                    f"score={ai_decision.final_score:.2f}, "
+                                    f"{ai_decision.reasoning[:100]}"
+                                )
+                                self._log_signal_with_features(
+                                    signal, ml_result, regime_data, executed=False
+                                )
+                                continue
+                            # Adjust confidence based on AI consensus
+                            if ai_decision.confidence:
+                                signal.confidence = (signal.confidence + ai_decision.confidence) / 2
+                        except asyncio.TimeoutError:
+                            logger.warning(f"AI evaluation timed out for {signal.symbol} — proceeding without AI")
+                        except Exception as e:
+                            logger.warning(f"AI evaluation failed for {signal.symbol}: {e} — proceeding without AI")
+
                 # ── Risk check ──
                 allowed, reason = self.risk_manager.check_can_trade(signal)
                 if not allowed:
@@ -582,6 +630,19 @@ class AlphaDesk:
             "sma_cross": meta.get("sma_cross", False),
             "hour": datetime.utcnow().hour,
         }
+
+    async def _run_ai_evaluation(self, signal, signal_data: dict, regime_data: dict) -> dict:
+        """Run AI agent evaluation, handling both sync and async implementations."""
+        import inspect
+        result = self.ai_manager.evaluate_signal(
+            trade_signal=signal,
+            market_data=signal_data,
+            portfolio_state=self.risk_manager.state,
+            regime=regime_data,
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
     def _log_signal_with_features(self, signal: TradeSignal, ml_result: dict,
                                     regime_data: dict, executed: bool) -> int:

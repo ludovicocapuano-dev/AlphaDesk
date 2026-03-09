@@ -10,6 +10,7 @@ Commands:
   /trades      — Recent trade history
   /performance — Strategy performance (30d)
   /ml          — ML ensemble status
+  /ai          — AI agent status + recent decisions
   /rebalance   — Portfolio rebalancing analysis
   /help        — Show available commands
 """
@@ -155,6 +156,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("performance", self._cmd_performance))
         self._app.add_handler(CommandHandler("ml", self._cmd_ml))
         self._app.add_handler(CommandHandler("rebalance", self._cmd_rebalance))
+        self._app.add_handler(CommandHandler("ai", self._cmd_ai))
         self._app.add_handler(CommandHandler("set_eur", self._cmd_set_eur))
 
         logger.info("Telegram bot starting polling...")
@@ -187,6 +189,7 @@ class TelegramBot:
             "/trades — Recent trade history\n"
             "/performance — Strategy stats (30d)\n"
             "/ml — ML ensemble status\n"
+            "/ai — AI agent status + decisions\n"
             "/rebalance — Rebalancing analysis\n"
             "/set_eur &lt;amount&gt; — Update EUR wallet balance\n"
             "/help — This message"
@@ -582,6 +585,101 @@ class TelegramBot:
                 f"  Training-ready: {label_stats.get('training_ready', 0)}"
             )
 
+            await update.message.reply_text(msg, parse_mode="HTML")
+
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+
+    async def _cmd_ai(self, update, context):
+        """AI agent status and recent decisions."""
+        if not self._is_authorized(update.effective_chat.id):
+            return
+
+        try:
+            ai_mgr = getattr(self.desk, 'ai_manager', None)
+
+            if ai_mgr is None:
+                await update.message.reply_text(
+                    "🤖 <b>AI AGENT MANAGER</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "❌ Status: <b>DISABLED</b>\n"
+                    "Set ANTHROPIC_API_KEY in .env to enable.",
+                    parse_mode="HTML",
+                )
+                return
+
+            # Status line
+            msg = (
+                "🤖 <b>AI AGENT MANAGER</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "✅ Status: <b>ACTIVE</b>\n"
+            )
+
+            # Token usage
+            usage = getattr(ai_mgr, 'token_usage', None)
+            if usage and isinstance(usage, dict):
+                today_tokens = usage.get('today', 0)
+                total_tokens = usage.get('total', 0)
+                msg += (
+                    f"📊 Tokens today: {today_tokens:,}\n"
+                    f"📊 Tokens total: {total_tokens:,}\n"
+                )
+            elif hasattr(ai_mgr, 'get_usage'):
+                try:
+                    usage_data = ai_mgr.get_usage()
+                    msg += (
+                        f"📊 Tokens today: {usage_data.get('today', 0):,}\n"
+                        f"📊 Tokens total: {usage_data.get('total', 0):,}\n"
+                    )
+                except Exception:
+                    msg += "📊 Token usage: N/A\n"
+            else:
+                msg += "📊 Token usage: N/A\n"
+
+            # Cache stats
+            cache = getattr(ai_mgr, 'cache_stats', None)
+            if cache and isinstance(cache, dict):
+                msg += (
+                    f"💾 Cache hits: {cache.get('hits', 0)} | "
+                    f"misses: {cache.get('misses', 0)}\n"
+                )
+            elif hasattr(ai_mgr, 'get_cache_stats'):
+                try:
+                    cs = ai_mgr.get_cache_stats()
+                    msg += (
+                        f"💾 Cache hits: {cs.get('hits', 0)} | "
+                        f"misses: {cs.get('misses', 0)}\n"
+                    )
+                except Exception:
+                    pass
+
+            # Recent evaluations
+            history = getattr(ai_mgr, 'evaluation_history', None)
+            if history is None and hasattr(ai_mgr, 'get_history'):
+                try:
+                    history = ai_mgr.get_history()
+                except Exception:
+                    history = None
+
+            if history and len(history) > 0:
+                msg += "\n<b>Recent AI Evaluations:</b>\n"
+                for ev in list(history)[-5:]:
+                    symbol = ev.get("symbol", "?")
+                    score = ev.get("ai_score", 0)
+                    approved = ev.get("approved", False)
+                    verdict = "✅ APPROVED" if approved else "❌ REJECTED"
+                    agents = ev.get("agents", [])
+                    votes = ""
+                    if agents:
+                        votes = " | " + ", ".join(
+                            f"{a.get('name', '?')[:8]}={'Y' if a.get('approved') else 'N'}"
+                            for a in agents[:4]
+                        )
+                    msg += f"  {symbol}: {score:.2f} {verdict}{votes}\n"
+            else:
+                msg += "\n📭 No AI evaluations yet this session."
+
+            msg += f"\n\n⏰ {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
             await update.message.reply_text(msg, parse_mode="HTML")
 
         except Exception as e:
