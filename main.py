@@ -322,26 +322,22 @@ class AlphaDesk:
         )
 
     def _apply_risk_parity(self):
-        """Risk parity: allocate inversely proportional to realized volatility.
+        """Correlation-aware risk parity: equalize risk contributions.
 
-        Each strategy gets allocation ∝ 1/σ, where σ is the annualized
-        volatility of its historical PnL returns. Strategies with lower
-        volatility get more capital — equalizing risk contribution.
+        Uses scipy optimization to find weights where each strategy
+        contributes equally to total portfolio volatility, accounting
+        for correlations between strategies. Falls back to inverse-vol
+        if insufficient data.
         """
         import numpy as np
+        import sqlite3
 
         name_map = {s.name: s for s in self.strategies if s.name != "pead"}
-        inv_vols = {}
-        min_trades = 15  # Need enough data for meaningful vol estimate
+        strategy_names = list(name_map.keys())
+        min_trades = 15
+        returns_by_strategy = {}
 
-        for name, strategy in name_map.items():
-            perf = self.db.get_strategy_performance(name, days=90)
-            if perf["trades"] < min_trades:
-                inv_vols[name] = None  # Not enough data
-                continue
-
-            # Get individual trade returns
-            import sqlite3
+        for name in strategy_names:
             with sqlite3.connect(self.db.db_path) as conn:
                 rows = conn.execute(
                     """SELECT pnl_pct FROM trades
@@ -350,38 +346,79 @@ class AlphaDesk:
                        ORDER BY close_time DESC""",
                     (name,),
                 ).fetchall()
-
             returns = [r[0] for r in rows if r[0] is not None]
-            if len(returns) < min_trades:
-                inv_vols[name] = None
-                continue
+            if len(returns) >= min_trades:
+                returns_by_strategy[name] = returns
 
-            vol = float(np.std(returns)) * np.sqrt(252)  # Annualized
-            vol = max(vol, 0.01)  # Floor to avoid division by zero
-            inv_vols[name] = 1.0 / vol
-
-        # Only apply if we have vol estimates for at least 2 strategies
-        valid = {k: v for k, v in inv_vols.items() if v is not None}
-        if len(valid) < 2:
+        # Need at least 2 strategies with data
+        if len(returns_by_strategy) < 2:
             logger.info("Risk parity: insufficient data — using regime allocations")
             return
 
-        # For strategies without data, use median inv_vol
-        median_iv = float(np.median(list(valid.values())))
-        for name in name_map:
-            if inv_vols.get(name) is None:
-                inv_vols[name] = median_iv
+        # Build covariance matrix (pad shorter series with zeros)
+        valid_names = list(returns_by_strategy.keys())
+        max_len = max(len(v) for v in returns_by_strategy.values())
+        returns_matrix = np.zeros((max_len, len(valid_names)))
+        for i, name in enumerate(valid_names):
+            r = returns_by_strategy[name]
+            returns_matrix[:len(r), i] = r
 
-        # Normalize to sum to 1.0
-        total_iv = sum(inv_vols.values())
-        if total_iv <= 0:
-            return
+        cov = np.cov(returns_matrix, rowvar=False)
+        # Ledoit-Wolf shrinkage for stability
+        n = len(valid_names)
+        shrinkage = 0.3
+        cov = (1 - shrinkage) * cov + shrinkage * np.diag(np.diag(cov))
 
-        rp_alloc = {name: iv / total_iv for name, iv in inv_vols.items()}
+        # Optimize for equal risk contribution
+        try:
+            from scipy.optimize import minimize
 
-        # Blend: 60% risk parity + 40% regime allocation (smooth transition)
+            def risk_contrib_obj(w):
+                w = np.array(w)
+                port_vol = np.sqrt(w @ cov @ w)
+                if port_vol < 1e-10:
+                    return 1e10
+                mrc = cov @ w / port_vol  # marginal risk contribution
+                rc = w * mrc              # risk contribution per strategy
+                target = port_vol / n     # equal risk target
+                return float(np.sum((rc - target) ** 2))
+
+            x0 = np.ones(n) / n
+            bounds = [(0.05, 0.60)] * n
+            constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
+            result = minimize(risk_contrib_obj, x0, method="SLSQP",
+                              bounds=bounds, constraints=constraints,
+                              options={"maxiter": 200})
+
+            if result.success:
+                rp_weights = {name: float(w) for name, w in zip(valid_names, result.x)}
+            else:
+                # Fallback to inverse-vol
+                vols = np.sqrt(np.diag(cov))
+                inv_vols = 1.0 / np.maximum(vols, 0.01)
+                inv_vols /= inv_vols.sum()
+                rp_weights = {name: float(w) for name, w in zip(valid_names, inv_vols)}
+
+        except ImportError:
+            # scipy not available — naive inverse-vol
+            vols = np.sqrt(np.diag(cov))
+            inv_vols = 1.0 / np.maximum(vols, 0.01)
+            inv_vols /= inv_vols.sum()
+            rp_weights = {name: float(w) for name, w in zip(valid_names, inv_vols)}
+
+        # Strategies without enough data get median weight
+        if len(rp_weights) < len(strategy_names):
+            median_w = float(np.median(list(rp_weights.values())))
+            for name in strategy_names:
+                if name not in rp_weights:
+                    rp_weights[name] = median_w
+            # Renormalize
+            total_w = sum(rp_weights.values())
+            rp_weights = {k: v / total_w for k, v in rp_weights.items()}
+
+        # Blend: 60% risk parity + 40% regime allocation
         for name, strategy in name_map.items():
-            blended = 0.6 * rp_alloc[name] + 0.4 * strategy.allocation_pct
+            blended = 0.6 * rp_weights.get(name, 0.25) + 0.4 * strategy.allocation_pct
             strategy.allocation_pct = blended
 
         # Renormalize
@@ -391,8 +428,8 @@ class AlphaDesk:
                 s.allocation_pct /= total
 
         logger.info(
-            f"Risk parity allocations: "
-            + ", ".join(f"{k}={rp_alloc[k]:.0%}" for k in rp_alloc)
+            f"Risk parity (corr-aware): "
+            + ", ".join(f"{k}={rp_weights[k]:.0%}" for k in rp_weights)
             + " | Blended: "
             + ", ".join(f"{s.name}={s.allocation_pct:.0%}" for s in self.strategies)
         )
@@ -706,6 +743,10 @@ class AlphaDesk:
             "momentum_3m": meta.get("momentum_3m", 0),
             "sma_cross": meta.get("sma_cross", False),
             "hour": datetime.utcnow().hour,
+            # AFML features (López de Prado)
+            "close_ffd": meta.get("close_ffd", 0),
+            "ffd_zscore": meta.get("ffd_zscore", 0),
+            "cusum_event": meta.get("cusum_event", False),
         }
 
     async def _run_ai_evaluation(self, signal, signal_data: dict, regime_data: dict) -> dict:

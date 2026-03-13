@@ -138,6 +138,16 @@ class DataEngine:
         if len(df) > 50:
             ffd = DataEngine.frac_diff(df["close"], d=0.35)
             df["close_ffd"] = ffd
+            # FFD z-score: how far current FFD is from its rolling mean
+            ffd_mean = ffd.rolling(20).mean()
+            ffd_std = ffd.rolling(20).std().replace(0, 1e-8)
+            df["ffd_zscore"] = (ffd - ffd_mean) / ffd_std
+            # CUSUM event flag: True if last bar triggered CUSUM filter
+            try:
+                events = DataEngine.cusum_filter(df["close"])
+                df["cusum_event"] = df.index.isin(events)
+            except Exception:
+                df["cusum_event"] = False
 
         return df
 

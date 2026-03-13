@@ -128,6 +128,9 @@ class MeanReversionStrategy(BaseStrategy):
                         "type": "single_name_long",
                         "target_sma20": latest["sma_20"],
                         "bb_width": latest.get("bb_width", 0),
+                        "close_ffd": latest.get("close_ffd", 0),
+                        "ffd_zscore": latest.get("ffd_zscore", 0),
+                        "cusum_event": bool(latest.get("cusum_event", False)),
                     },
                 )
 

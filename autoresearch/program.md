@@ -84,12 +84,16 @@ Each experiment runs on a dedicated git branch (`autoresearch/<tag>`).
 2. Propose 1-3 parameter changes with reasoning
 3. Apply changes to `strategy_tuner.py`
 4. Git commit the change
-5. Run backtest (~2-5 min depending on strategy)
+5. Run in-sample backtest (2023-2025, ~2-5 min)
 6. Evaluate: did score improve by >= 0.002?
-7. If improved → keep commit (PROMOTE)
-8. If worse or marginal → git reset (REJECT)
-9. Log result to `results.tsv`
-10. Repeat
+7. If improved → run **out-of-sample backtest** (2020-2022)
+8. OOS must score >= 50% of in-sample score with >= 10 trades
+9. If both pass → PROMOTE. If OOS fails → REJECT (overfitting detected)
+10. Log result to `results.tsv`
+11. Repeat
+
+**IMPORTANT**: Parameters that only work on 2023-2025 but fail on 2020-2022
+are overfitted. Prefer robust parameters that work across both periods.
 
 ## NEVER STOP
 

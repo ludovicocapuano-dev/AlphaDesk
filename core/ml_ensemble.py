@@ -55,11 +55,12 @@ class FeaturePipeline:
             rate(-1 to +1), correlation(0-2)
     [13-17] Technical: rsi_norm, macd_norm, bb_position, momentum_3m, sma_cross
     [18-19] Time features: hour_sin, hour_cos (cyclical encoding)
+    [20-22] AFML features: close_ffd (fractional diff), ffd_zscore, cusum_event
 
-    Total: 20 features
+    Total: 23 features
     """
 
-    FEATURE_DIM = 20
+    FEATURE_DIM = 23
 
     # Regime category → numeric encoding
     VOL_MAP = {"low": 0, "medium": 1, "high": 2, "extreme": 3}
@@ -118,6 +119,14 @@ class FeaturePipeline:
         features[18] = np.sin(2 * np.pi * hour / 24)
         features[19] = np.cos(2 * np.pi * hour / 24)
 
+        # [20-22] AFML features (López de Prado)
+        # FFD close: fractionally differentiated price (stationarity + memory)
+        features[20] = np.tanh(signal_data.get("close_ffd", 0) * 100)
+        # FFD z-score: how far FFD is from its rolling mean
+        features[21] = np.tanh(signal_data.get("ffd_zscore", 0))
+        # CUSUM event: 1 if recent CUSUM filter triggered, 0 otherwise
+        features[22] = 1.0 if signal_data.get("cusum_event", False) else 0.0
+
         return features
 
     def normalize(self, features: np.ndarray) -> np.ndarray:
@@ -169,7 +178,7 @@ if HAS_TORCH:
         Output: P(trade is profitable at 1h horizon)
         """
 
-        def __init__(self, input_dim: int = 20, dropout: float = 0.3):
+        def __init__(self, input_dim: int = 23, dropout: float = 0.3):
             super().__init__()
             self.net = nn.Sequential(
                 nn.Linear(input_dim, 64),

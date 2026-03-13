@@ -159,6 +159,9 @@ class MomentumStrategy(BaseStrategy):
                 "atr": atr,
                 "sma_50_dist": (entry - latest["sma_50"]) / entry,
                 "breakout_level": high_20,
+                "close_ffd": latest.get("close_ffd", 0),
+                "ffd_zscore": latest.get("ffd_zscore", 0),
+                "cusum_event": bool(latest.get("cusum_event", False)),
             },
         )
 

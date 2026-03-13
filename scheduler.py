@@ -19,12 +19,43 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+import pandas as pd
+import exchange_calendars as xcals
+
 from config.settings import config
 from main import AlphaDesk
 from utils.logger import setup_logging
 from utils.telegram_bot import TelegramBot
 
 logger = logging.getLogger("alphadesk.scheduler")
+
+# Market calendars
+NYSE = xcals.get_calendar("XNYS")  # US equities & ETFs
+
+def is_market_open() -> bool:
+    """Check if any relevant market is open (equities or FX)."""
+    now = pd.Timestamp.now(tz="UTC")
+    weekday = now.weekday()  # 0=Mon, 6=Sun
+
+    # FX: 24/5 (Sunday 22:00 UTC → Friday 22:00 UTC)
+    if weekday == 6 and now.hour >= 22:
+        return True  # Sunday evening FX open
+    if weekday == 5 and now.hour >= 22:
+        return False  # Saturday — all closed
+    if weekday == 5:
+        return False  # Saturday before 22:00
+    if weekday == 6:
+        return False  # Sunday before 22:00
+
+    # Mon-Fri: FX is always open, but check equities too
+    # If NYSE is open, both equity + FX are tradeable
+    # If NYSE is closed (e.g., holiday), only FX
+    try:
+        equity_open = NYSE.is_trading_minute(now)
+    except Exception:
+        equity_open = False
+
+    return True  # Mon-Fri at least FX is open
 
 
 class AlphaDeskScheduler:
@@ -53,7 +84,8 @@ class AlphaDeskScheduler:
 
         # ── Signal Scan (every 15 min) ──
         self.scheduler.add_job(
-            self._safe_run(self.desk.run_signal_scan, jitter_seconds=240),
+            self._safe_run(self.desk.run_signal_scan, jitter_seconds=240,
+                          require_market_open=True),
             IntervalTrigger(minutes=config.signal_scan_interval_minutes),
             id="signal_scan",
             name="Signal Scan (v2 + ML)",
@@ -73,7 +105,8 @@ class AlphaDeskScheduler:
 
         # ── Risk Monitor (every 5 min) ──
         self.scheduler.add_job(
-            self._safe_run(self.desk.run_risk_check),
+            self._safe_run(self.desk.run_risk_check,
+                          require_market_open=True),
             IntervalTrigger(minutes=config.risk_check_interval_minutes),
             id="risk_check",
             name="Risk Monitor",
@@ -200,10 +233,19 @@ class AlphaDeskScheduler:
             "System will resume Monday."
         )
 
-    def _safe_run(self, coro_func, jitter_seconds: int = 0):
-        """Wrap async functions with error handling and optional jitter."""
+    def _safe_run(self, coro_func, jitter_seconds: int = 0,
+                  require_market_open: bool = False):
+        """Wrap async functions with error handling and optional jitter.
+
+        Args:
+            require_market_open: If True, skip execution when markets are closed.
+        """
         async def wrapper():
             try:
+                if require_market_open and not is_market_open():
+                    logger.debug(f"Markets closed — skipping {coro_func.__name__}")
+                    return
+
                 if jitter_seconds > 0:
                     delay = random.randint(0, jitter_seconds)
                     logger.debug(f"Applying {delay}s jitter before {coro_func.__name__}")

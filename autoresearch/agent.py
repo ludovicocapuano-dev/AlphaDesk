@@ -775,6 +775,38 @@ def run_one_round(client: Anthropic, strategy: str, round_num: int,
         )
         promoted = False
 
+    # 6b. STAGED VALIDATION: out-of-sample backtest on 2020-2022
+    oos_score = None
+    if promoted:
+        logger.info(f"[Round {round_num}] In-sample passed — running OOS validation (2020-2022)...")
+        try:
+            oos_result = run_experiment(
+                strategy, f"{exp_id}_oos", timeout=300,
+                start_date="2020-01-01", end_date="2022-12-31",
+            )
+            if oos_result:
+                oos_score = oos_result["metrics"]["score"]
+                oos_trades = oos_result["metrics"].get("num_trades", 0)
+                # OOS must have at least 50% of in-sample score and >= 10 trades
+                oos_threshold = new_score * 0.5
+                if oos_score < oos_threshold or oos_trades < 10:
+                    logger.warning(
+                        f"[Round {round_num}] OOS FAILED: score {oos_score:.4f} "
+                        f"(need >= {oos_threshold:.4f}), trades={oos_trades} — OVERFITTING detected"
+                    )
+                    promoted = False
+                else:
+                    logger.info(
+                        f"[Round {round_num}] OOS PASSED: score {oos_score:.4f}, "
+                        f"trades={oos_trades} — robust improvement confirmed"
+                    )
+            else:
+                logger.warning(f"[Round {round_num}] OOS backtest returned no result — rejecting")
+                promoted = False
+        except Exception as e:
+            logger.warning(f"[Round {round_num}] OOS backtest crashed: {e} — rejecting")
+            promoted = False
+
     # 7. Record history (JSONL)
     changes_summary = ", ".join(f"{k}:{current_params.get(k)}->{v}" for k, v in changes.items())
     entry = {
@@ -792,6 +824,7 @@ def run_one_round(client: Anthropic, strategy: str, round_num: int,
         "reasoning": reasoning,
         "params": new_params,
         "metrics": result["metrics"],
+        "oos_score": oos_score,
         "elapsed_seconds": round(elapsed, 1),
     }
     append_history(entry)

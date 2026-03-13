@@ -181,8 +181,13 @@ def create_strategy(strategy_name):
     return strategy
 
 
-def run_experiment(strategy_name, experiment_id, timeout=300):
-    """Run a single backtest experiment."""
+def run_experiment(strategy_name, experiment_id, timeout=300,
+                   start_date=None, end_date=None):
+    """Run a single backtest experiment.
+
+    Args:
+        start_date/end_date: Override BACKTEST_CONFIG dates (for OOS validation).
+    """
     os.makedirs(RESULTS_DIR, exist_ok=True)
     patch_strategies()
 
@@ -196,7 +201,9 @@ def run_experiment(strategy_name, experiment_id, timeout=300):
     # Load market data
     logger.info("Loading market data...")
     bc = BACKTEST_CONFIG
-    price_data = get_universe(strategy_name, bc["start_date"], bc["end_date"])
+    sd = start_date or bc["start_date"]
+    ed = end_date or bc["end_date"]
+    price_data = get_universe(strategy_name, sd, ed)
 
     if not price_data:
         logger.error("No data loaded!")
@@ -214,8 +221,8 @@ def run_experiment(strategy_name, experiment_id, timeout=300):
         slippage_pct=bc["slippage_pct"],
         max_positions=bc["max_positions"],
         risk_per_trade=bc["risk_per_trade"],
-        start_date=bc["start_date"],
-        end_date=bc["end_date"],
+        start_date=sd,
+        end_date=ed,
     )
 
     # Run backtest
