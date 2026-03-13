@@ -321,6 +321,82 @@ class AlphaDesk:
             + ", ".join(f"{k}={v:.0%}" for k, v in adjusted.items())
         )
 
+    def _apply_risk_parity(self):
+        """Risk parity: allocate inversely proportional to realized volatility.
+
+        Each strategy gets allocation ∝ 1/σ, where σ is the annualized
+        volatility of its historical PnL returns. Strategies with lower
+        volatility get more capital — equalizing risk contribution.
+        """
+        import numpy as np
+
+        name_map = {s.name: s for s in self.strategies if s.name != "pead"}
+        inv_vols = {}
+        min_trades = 15  # Need enough data for meaningful vol estimate
+
+        for name, strategy in name_map.items():
+            perf = self.db.get_strategy_performance(name, days=90)
+            if perf["trades"] < min_trades:
+                inv_vols[name] = None  # Not enough data
+                continue
+
+            # Get individual trade returns
+            import sqlite3
+            with sqlite3.connect(self.db.db_path) as conn:
+                rows = conn.execute(
+                    """SELECT pnl_pct FROM trades
+                       WHERE strategy = ? AND status = 'closed'
+                         AND close_time >= datetime('now', '-90 days')
+                       ORDER BY close_time DESC""",
+                    (name,),
+                ).fetchall()
+
+            returns = [r[0] for r in rows if r[0] is not None]
+            if len(returns) < min_trades:
+                inv_vols[name] = None
+                continue
+
+            vol = float(np.std(returns)) * np.sqrt(252)  # Annualized
+            vol = max(vol, 0.01)  # Floor to avoid division by zero
+            inv_vols[name] = 1.0 / vol
+
+        # Only apply if we have vol estimates for at least 2 strategies
+        valid = {k: v for k, v in inv_vols.items() if v is not None}
+        if len(valid) < 2:
+            logger.info("Risk parity: insufficient data — using regime allocations")
+            return
+
+        # For strategies without data, use median inv_vol
+        median_iv = float(np.median(list(valid.values())))
+        for name in name_map:
+            if inv_vols.get(name) is None:
+                inv_vols[name] = median_iv
+
+        # Normalize to sum to 1.0
+        total_iv = sum(inv_vols.values())
+        if total_iv <= 0:
+            return
+
+        rp_alloc = {name: iv / total_iv for name, iv in inv_vols.items()}
+
+        # Blend: 60% risk parity + 40% regime allocation (smooth transition)
+        for name, strategy in name_map.items():
+            blended = 0.6 * rp_alloc[name] + 0.4 * strategy.allocation_pct
+            strategy.allocation_pct = blended
+
+        # Renormalize
+        total = sum(s.allocation_pct for s in self.strategies)
+        if total > 0:
+            for s in self.strategies:
+                s.allocation_pct /= total
+
+        logger.info(
+            f"Risk parity allocations: "
+            + ", ".join(f"{k}={rp_alloc[k]:.0%}" for k in rp_alloc)
+            + " | Blended: "
+            + ", ".join(f"{s.name}={s.allocation_pct:.0%}" for s in self.strategies)
+        )
+
     def _apply_ic_weighting(self):
         """
         Refine strategy allocations using rolling 60-day Information Coefficient.
@@ -390,6 +466,7 @@ class AlphaDesk:
         if self._current_regime:
             self.data_engine._last_vol_regime = self._current_regime.data.get("volatility_regime")
         self._apply_regime_allocations()
+        self._apply_risk_parity()
         self._apply_ic_weighting()
 
         # 3. Check exits on existing positions
@@ -782,10 +859,307 @@ class AlphaDesk:
         result = await label_and_retrain(self.data_engine)
         return result
 
+    # ────────────────────── Morning Briefing ──────────────────────
+
+    async def run_morning_briefing(self):
+        """Daily GS UHNWI-style briefing dispatcher.
+        Weekday → daily macro analysis
+        Saturday → weekly recap with accuracy evaluation
+        Sunday → forward-looking weekly outlook
+        """
+        from datetime import datetime
+        import sqlite3
+
+        today = datetime.utcnow()
+        day_of_week = today.weekday()  # 0=Mon, 5=Sat, 6=Sun
+
+        try:
+            if day_of_week == 5:
+                await self._run_saturday_recap()
+            elif day_of_week == 6:
+                await self._run_sunday_outlook()
+            else:
+                await self._run_daily_briefing()
+        except Exception as e:
+            logger.error(f"Morning briefing failed: {e}", exc_info=True)
+            await self.notifier.send_message(f"⚠️ Briefing error: {e}")
+
+    async def _get_portfolio_snapshot(self) -> str:
+        """Get current portfolio state for briefing."""
+        try:
+            from config.instruments import ALL_IDS
+            reverse_map = {v: k for k, v in ALL_IDS.items()}
+            portfolio = await self.etoro.get_portfolio()
+            positions = portfolio.get("clientPortfolio", {}).get("positions", [])
+
+            lines = []
+            total_inv = 0
+            total_pnl = 0
+            for p in positions:
+                iid = p.get("instrumentID", 0)
+                ticker = reverse_map.get(iid, f"ID:{iid}")
+                amount = p.get("amount", 0)
+                rate = p.get("openRate", 0)
+                lines.append(f"  {ticker}: ${amount:.0f} @ {rate}")
+                total_inv += amount
+
+            # Try to get PnL from PnL endpoint
+            try:
+                pnl_data = await self.etoro.get_pnl()
+                pnl_positions = pnl_data.get("clientPortfolio", {}).get("positions", [])
+                total_pnl = sum(p.get("unrealizedPnL", {}).get("pnL", 0) for p in pnl_positions)
+            except Exception:
+                pass
+
+            header = f"Portfolio: ${total_inv:,.0f} invested | PnL: ${total_pnl:+,.2f}\n"
+            return header + "\n".join(lines)
+        except Exception as e:
+            return f"Portfolio: unavailable ({e})"
+
+    def _get_regime_text(self) -> str:
+        """Get current regime for briefing."""
+        if self._current_regime:
+            r = self._current_regime
+            return (
+                f"Regime: vol={r.data.get('volatility_regime', '?')}, "
+                f"trend={r.data.get('trend_regime', '?')}, "
+                f"liquidity={r.data.get('liquidity_regime', '?')}"
+            )
+        # Compute fresh if cached is None
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            # Can't await here synchronously, return cached or unknown
+            return "Regime: computing..."
+        except Exception:
+            return "Regime: unknown"
+
+    async def _get_uw_text(self) -> str:
+        """Get Unusual Whales snapshot for briefing."""
+        if not hasattr(self, 'uw_client') or not self.uw_client:
+            return "Unusual Whales: not configured"
+        try:
+            snapshot = await self.uw_client.get_macro_snapshot()
+            return f"UW Market Tide: {json.dumps(snapshot, indent=2)[:500]}"
+        except Exception as e:
+            return f"Unusual Whales: error ({e})"
+
+    async def _get_uw_full_data(self) -> str:
+        """Get comprehensive UW data for GS-style analysis."""
+        if not hasattr(self, 'uw_client') or not self.uw_client:
+            return ""
+        try:
+            import asyncio
+            tasks = {
+                "market_tide": self.uw_client.get_market_tide(),
+                "sectors": self.uw_client.get_sector_etfs(),
+                "congress": self.uw_client.get_congress_signals(),
+                "calendar": self.uw_client.get_economic_calendar(),
+                "insider": self.uw_client.get_insider_aggregate(),
+            }
+            # Dark pool on major ETFs
+            for etf in ["SPY", "QQQ", "TLT", "GLD", "XLE"]:
+                tasks[f"dp_{etf}"] = self.uw_client.get_darkpool_ticker(etf)
+
+            results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+            data = {}
+            for key, result in zip(tasks.keys(), results):
+                if not isinstance(result, Exception):
+                    data[key] = result
+
+            return json.dumps(data, indent=2, default=str)[:3000]
+        except Exception as e:
+            return f"UW data error: {e}"
+
+    async def _ai_prompt(self, prompt: str, max_tokens: int = 2000, model: str = "claude-sonnet-4-6") -> str:
+        """Call Claude for AI analysis."""
+        from anthropic import Anthropic
+        client = Anthropic()
+        response = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+
+    def _save_briefing(self, briefing_type: str, content: str):
+        """Save briefing to SQLite for weekly recap."""
+        import sqlite3
+        with sqlite3.connect(self.db.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS briefings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT DEFAULT (datetime('now')),
+                    type TEXT,
+                    content TEXT
+                )
+            """)
+            conn.execute(
+                "INSERT INTO briefings (type, content) VALUES (?, ?)",
+                (briefing_type, content),
+            )
+
+    async def _run_daily_briefing(self):
+        """GS UHNWI-style daily macro briefing via Telegram."""
+        logger.info("Running daily briefing (GS UHNWI-style)...")
+
+        # Gather data
+        portfolio = await self._get_portfolio_snapshot()
+        regime = self._get_regime_text()
+        uw_basic = await self._get_uw_text()
+        uw_full = await self._get_uw_full_data()
+
+        # Part 1: Data summary via Telegram
+        data_msg = (
+            f"📊 *DAILY BRIEFING* — {datetime.utcnow().strftime('%Y-%m-%d')}\n\n"
+            f"🌍 {regime}\n\n"
+            f"💼 {portfolio}\n\n"
+            f"🐋 {uw_basic}"
+        )
+        await self.notifier.send_message(data_msg)
+
+        # Part 2: AI analysis (Sonnet)
+        prompt = f"""You are a senior Goldman Sachs analyst preparing a morning briefing
+for an UHNWI client with a $15K quantitative trading portfolio on eToro.
+
+Write a concise, actionable briefing covering:
+1. MACRO OVERVIEW — global market conditions, key overnight moves
+2. RISK ASSESSMENT — what could go wrong today, tail risks
+3. PORTFOLIO REVIEW — comment on current positions
+4. ACTIONABLE IDEAS — 2-3 specific trade ideas with entry/exit levels
+5. WATCHLIST — key events/data releases today
+
+CURRENT DATA:
+{regime}
+
+{portfolio}
+
+UNUSUAL WHALES DATA:
+{uw_full[:2000]}
+
+Keep it under 400 words. Be specific with numbers. No disclaimers.
+Write in English, professional tone."""
+
+        try:
+            analysis = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self._ai_prompt_sync(prompt, 2000, "claude-sonnet-4-6")
+            )
+            await self.notifier.send_message(f"🏦 *GS ANALYSIS*\n\n{analysis}")
+            self._save_briefing("daily", f"{data_msg}\n\n---\n\n{analysis}")
+            logger.info("Daily briefing sent successfully")
+        except Exception as e:
+            logger.error(f"AI analysis failed: {e}")
+            self._save_briefing("daily", data_msg)
+
+    def _ai_prompt_sync(self, prompt: str, max_tokens: int = 2000, model: str = "claude-sonnet-4-6") -> str:
+        """Synchronous Claude call for use in run_in_executor."""
+        from anthropic import Anthropic
+        client = Anthropic()
+        response = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+
+    async def _run_saturday_recap(self):
+        """Saturday: recap the week's briefings, evaluate accuracy."""
+        logger.info("Running Saturday weekly recap...")
+        import sqlite3
+
+        # Load week's briefings
+        with sqlite3.connect(self.db.db_path) as conn:
+            rows = conn.execute(
+                """SELECT timestamp, type, content FROM briefings
+                   WHERE timestamp >= datetime('now', '-7 days')
+                   ORDER BY timestamp""",
+            ).fetchall()
+
+        week_briefings = "\n\n---\n\n".join(
+            f"[{r[0]}] {r[1]}:\n{r[2][:500]}" for r in rows
+        ) if rows else "No briefings this week."
+
+        portfolio = await self._get_portfolio_snapshot()
+
+        prompt = f"""You are a senior Goldman Sachs analyst doing a WEEKLY RECAP for an UHNWI client.
+
+Review this week's daily briefings and evaluate:
+1. ACCURACY — which predictions were right/wrong?
+2. PORTFOLIO PERFORMANCE — how did positions perform this week?
+3. LESSONS LEARNED — what patterns emerged?
+4. GRADE — give the week's analysis an A-F grade with justification
+
+WEEK'S BRIEFINGS:
+{week_briefings[:3000]}
+
+CURRENT PORTFOLIO:
+{portfolio}
+
+Keep under 400 words. Be brutally honest about accuracy. Grade fairly."""
+
+        try:
+            analysis = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self._ai_prompt_sync(prompt, 2000)
+            )
+            msg = f"📅 *WEEKLY RECAP* — {datetime.utcnow().strftime('%Y-%m-%d')}\n\n{analysis}"
+            await self.notifier.send_message(msg)
+            self._save_briefing("weekly_recap", msg)
+        except Exception as e:
+            logger.error(f"Saturday recap failed: {e}")
+
+    async def _run_sunday_outlook(self):
+        """Sunday: forward-looking outlook for the coming week."""
+        logger.info("Running Sunday outlook...")
+        import sqlite3
+
+        # Load Saturday recap for context
+        with sqlite3.connect(self.db.db_path) as conn:
+            rows = conn.execute(
+                """SELECT content FROM briefings
+                   WHERE type = 'weekly_recap'
+                   ORDER BY timestamp DESC LIMIT 1""",
+            ).fetchall()
+
+        recap = rows[0][0][:1500] if rows else "No recap available."
+        portfolio = await self._get_portfolio_snapshot()
+        uw_data = await self._get_uw_full_data()
+
+        prompt = f"""You are a senior Goldman Sachs analyst preparing a WEEKLY OUTLOOK for an UHNWI client.
+
+Write a forward-looking analysis for the coming week:
+1. KEY EVENTS — economic calendar, earnings, central bank decisions
+2. MARKET OUTLOOK — expected direction, key levels to watch
+3. PORTFOLIO POSITIONING — what to keep, what to trim, what to add
+4. TOP 3 TRADES — specific actionable ideas with entry/SL/TP
+5. RISK SCENARIOS — bull case, bear case, base case
+
+LAST WEEK'S RECAP:
+{recap}
+
+CURRENT PORTFOLIO:
+{portfolio}
+
+UNUSUAL WHALES DATA:
+{uw_data[:2000]}
+
+Keep under 500 words. Be specific. Professional GS tone."""
+
+        try:
+            analysis = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self._ai_prompt_sync(prompt, 2500)
+            )
+            msg = f"🔮 *WEEKLY OUTLOOK* — {datetime.utcnow().strftime('%Y-%m-%d')}\n\n{analysis}"
+            await self.notifier.send_message(msg)
+            self._save_briefing("weekly_outlook", msg)
+        except Exception as e:
+            logger.error(f"Sunday outlook failed: {e}")
+
     async def shutdown(self):
         """Clean shutdown."""
         logger.info("Shutting down AlphaDesk...")
         await self.etoro.close()
+        if hasattr(self, 'uw_client') and self.uw_client:
+            await self.uw_client.close()
         logger.info("Shutdown complete")
 
 

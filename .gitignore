@@ -13,3 +13,9 @@ models/
 *.pt
 *.pkl
 books/
+autoresearch/cache/
+autoresearch/results/
+autoresearch/experiment_history.jsonl
+autoresearch/results.tsv
+autoresearch/.commit_msg.tmp
+logs/
