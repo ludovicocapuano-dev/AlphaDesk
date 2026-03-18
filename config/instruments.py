@@ -39,6 +39,9 @@ US_EQUITIES = {
     "KO": {"etoro_id": 1024, "sector": "Consumer Staples"},
 }
 
+# EU Equities (placeholder — no EU instruments on eToro Demo yet)
+EU_EQUITIES = {}
+
 # ETFs & Mining
 ETFS = {
     "XLE": {"etoro_id": 3008, "sector": "Energy"},
@@ -64,6 +67,13 @@ INDICES = {
     "GER40": {"etoro_id": 32, "sector": "EU Index"},
 }
 
+# Watchlist — tracking only (not on eToro, used as macro signals)
+# etoro_id=None means no trading, only data feed via yfinance/external
+WATCHLIST = {
+    "DFMREI": {"etoro_id": None, "sector": "Real Estate", "exchange": "DFM",
+               "yahoo": "DFMREI.AE", "note": "Dubai Financial Market Real Estate Index"},
+}
+
 # Forex pairs
 FX_PAIRS = {
     "EURUSD": {"etoro_id": 1, "base": "EUR", "quote": "USD"},
@@ -74,11 +84,14 @@ FX_PAIRS = {
     "EURGBP": {"etoro_id": 8, "base": "EUR", "quote": "GBP"},
 }
 
-# All instruments flat mapping: symbol -> etoro_id
+# All tradeable instruments flat mapping: symbol -> etoro_id
 ALL_IDS = {}
 for _d in (US_EQUITIES, ETFS, COMMODITIES, INDICES, FX_PAIRS):
     for _sym, _meta in _d.items():
         ALL_IDS[_sym] = _meta["etoro_id"]
+
+# Watchlist symbols (tracking only, not tradeable on eToro)
+WATCHLIST_SYMBOLS = {_sym: _meta for _sym, _meta in WATCHLIST.items()}
 
 
 def get_instrument_id(symbol: str) -> int:

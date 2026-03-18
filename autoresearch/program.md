@@ -195,32 +195,32 @@ If you run out of ideas:
 - [LOW] **Strategy is near a local optimum**. The last 20 experiments show diminishing returns with delta < 0.002 on most attempts. Meaningful progress likely requires simultaneous shifts in 2–3 interacting parameters (e.g., take_profit_pct + stop_loss_pct + rebalance_days) rather than single-parameter micro-tuning.
 
 
-## Auto-discovered Insights — fx_carry (2026-03-13 19:12)
+## Auto-discovered Insights — fx_carry (2026-03-18 07:26)
 
-## Auto-Discovered Insights — FX Carry (as of experiment 108)
+## Auto-Discovered Insights — FX Carry (last updated: 187 experiments)
 
-- [HIGH] **Best confirmed configuration**: `min_carry_spread=0.0095`, `atr_stop_multiplier=1.65`, `min_composite_score=0.105`, `carry_weight=0.7`, `momentum_weight=0.3` → score 0.6338. This is the current baseline. All subsequent experiments have failed to beat it.
+- [HIGH] **Best confirmed configuration**: min_carry_spread=0.0145, atr_stop_multiplier=1.72 → score=0.6603 (sharpe=0.21, ret=+0.14%, trades=81). This is the global peak and the primary target to beat.
 
-- [HIGH] **Early carry spread reduction was highly productive**: Lowering `min_carry_spread` from 0.018 → 0.0145 across 4 sequential promotions drove score from 0.6106 → 0.6603 (peak), paired with `atr_stop_multiplier` reductions (2.0 → 1.72). Below 0.0145, a large jump to 0.008 caused Sharpe collapse (-0.67), and the recovery to 0.0095 settled at 0.6338. Do not go below 0.008.
+- [HIGH] **min_carry_spread is the highest-impact parameter**: Tightening from 0.018→0.0145 produced monotonic score gains (+0.05 total). However, dropping below ~0.010 flips returns negative (sharpe drops to -0.3 to -0.7 range), destroying return_norm and calmar_norm despite trade count gains.
 
-- [HIGH] **The true peak was 0.6603** at `min_carry_spread=0.0145`, `atr_stop_multiplier=1.72`, `min_composite_score=0.1`. The subsequent aggressive cut to `min_carry_spread=0.008` broke Sharpe and the strategy never recovered to 0.6603. The 0.012–0.0145 zone deserves re-exploration.
+- [HIGH] **atr_stop_multiplier sweet spot is 1.70–1.75**: Values of 1.7–1.72 consistently score well. Going below 1.65 hurts performance; 1.3 and 1.55 were both rejected. Do not push below 1.65 or above 1.85 without strong justification.
 
-- [HIGH] **`atr_stop_multiplier` dead zones**: Values ≥ 1.75 and ≤ 1.58 consistently score below baseline. The productive range is 1.65–1.72. Avoid testing outside 1.60–1.75.
+- [HIGH] **Trade count vs. quality tradeoff**: Scores above 0.65 require 80–90 trades (hitting trade_activity cap). But achieving high trade count via very low min_carry_spread (<0.010) produces negative Sharpe, netting lower composite scores than ~82 trades with positive returns.
 
-- [HIGH] **`carry_weight=0.7` / `momentum_weight=0.3` is the best-found weighting**. All attempts to shift toward `carry_weight=0.65` / `momentum_weight=0.35` land at 0.6309 without exception — a reliable downgrade. Do not revisit this direction.
+- [HIGH] **Dead end — min_carry_spread below 0.009**: Values of 0.008 and 0.0085 both produce negative returns (ret=-0.53%, -0.26%) and negative Sharpe (-0.67, -0.34). The carry signal quality degrades below this threshold.
 
-- [HIGH] **`min_rr_ratio` is effectively inert**: Tested at 1.5, 1.2, 1.8, 1.0, and 0.8 — no value has beaten baseline. Changing it alone or combined yields 0.6166–0.6331. Deprioritize entirely.
+- [HIGH] **Dead end — trend_filter_sma changes**: Values of 30, 40, 50, and 75 were all rejected vs. baseline of 20. trend_filter_sma=20 is optimal; do not modify this parameter.
 
-- [MEDIUM] **`min_composite_score` has a narrow productive range**: 0.1–0.105 covers all promotions. Values below 0.09 or above 0.11 consistently rejected. Keep near 0.1.
+- [MEDIUM] **carry_weight=0.7, momentum_weight=0.3** underperforms vs. carry_weight=0.6/momentum_weight=0.5 when min_carry_spread is low (<0.010). At low spreads, more momentum weight makes negative-return trades worse. At mid-range spreads (~0.0145), default weights (0.6/0.5) appear superior.
 
-- [MEDIUM] **`max_positions` is not a lever**: Tested at 5, 6, and 8 with no improvement. Score at 8 = 0.6309–0.6331. Leave at 6.
+- [MEDIUM] **min_rr_ratio has low marginal impact**: Tested values of 0.5, 0.8, 1.0, 1.2, 1.5. Reducing from 1.5→1.0 with min_composite_score=0.095 gave score=0.6534 (trades=102, but sharpe=-0.30). Lower min_rr_ratio increases trades but at cost of signal quality when combined with low min_carry_spread.
 
-- [MEDIUM] **`max_risk_per_pair` shows no signal**: Tested at 0.015, 0.02, 0.022, 0.025 — all rejected, scores 0.6222–0.6331. Not a productive axis at current baseline.
+- [MEDIUM] **min_composite_score has narrow useful range**: Values 0.095–0.105 show marginal differences. Below 0.095 or above 0.12 both rejected. Not worth tuning independently; pair only with min_carry_spread adjustments.
 
-- [MEDIUM] **`min_confidence` is inert in tested range**: 0.5, 0.6, 0.6435 all rejected. Avoid changing unless combined with a carry-spread recovery experiment targeting the 0.012–0.0145 zone.
+- [MEDIUM] **Promising unexplored direction**: Try min_carry_spread=0.013–0.015, atr_stop_multiplier=1.73–1.78, with momentum_weight=0.5 and carry_weight=0.6. This targets the positive-return regime (sharpe>0) while pushing toward 80 trades. No experiment has combined mid-range spread with slightly higher ATR multiplier and default weights simultaneously.
 
-- [LOW] **Re-explore the 0.012–0.0145 `min_carry_spread` zone with current weights**: The peak (0.6603) was achieved here. It was abandoned prematurely in favor of aggressive tightening. Try `min_carry_spread=0.013`, `atr_stop_multiplier=1.70`, `carry_weight=0.7` as a recovery attempt toward the historical peak.
+- [LOW] **max_positions has negligible effect**: Tested 5, 6, 10 — no meaningful score difference at current parameter settings. Leave at default (6).
 
-- [LOW] **`trend_filter_sma` is untested in productive range**: Only tested at 20 (minimum) and 50. The valid range likely extends higher. Could interact with carry spread — explore cautiously with only one other parameter changed.
+- [LOW] **max_risk_per_pair=0.028 rejected**: Higher risk sizing (0.028 vs. 0.015) did not improve score; position sizing is not the binding constraint at current regime.
 
-- [LOW] **101 consecutive rejections signal a local optimum**. The landscape around the current baseline (0.6338) is flat. The most likely path to improvement is returning to the conditions of the 0.6603 peak rather than micro-tuning current values.
+- [LOW] **min_confidence=0.4–0.6735 range explored — no uplift**: Changing min_confidence from 0.6 has not helped in any combination tested. Treat as fixed at 0.6.

@@ -14,6 +14,7 @@ import logging
 import random
 import signal
 import sys
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -60,7 +61,7 @@ def is_market_open() -> bool:
 
 class AlphaDeskScheduler:
     """
-    H24 Scheduler running on VPS (v2 with ML ensemble).
+    H24 Scheduler running on VPS (v2 with ML ensemble + macro events).
 
     Schedule:
     - Signal scan: every 15 minutes
@@ -78,6 +79,7 @@ class AlphaDeskScheduler:
         self.scheduler = AsyncIOScheduler(timezone="UTC")
         self.bot = TelegramBot(self.desk)
         self._running = True
+        self._macro_trader = None
 
     def setup_schedules(self):
         """Configure all scheduled jobs."""
@@ -169,6 +171,15 @@ class AlphaDeskScheduler:
             name="Weekend Maintenance",
         )
 
+        # ── Macro Event Scheduler (daily 06:00 UTC, Mon-Fri) ──
+        # Checks BLS calendar for today's releases, sets up event handlers
+        self.scheduler.add_job(
+            self._safe_run(self._schedule_macro_events),
+            CronTrigger(hour=6, minute=0, day_of_week="mon-fri"),
+            id="macro_event_scheduler",
+            name="Macro Event Scheduler",
+        )
+
         logger.info("All schedules configured:")
         for job in self.scheduler.get_jobs():
             nrt = getattr(job, 'next_run_time', None)
@@ -192,6 +203,73 @@ class AlphaDeskScheduler:
         if drift["needs_retrain"]:
             logger.warning("Major drift detected — triggering emergency retrain")
             await self.desk.run_daily_retrain()
+
+    async def _schedule_macro_events(self):
+        """Check BLS calendar for today's releases and schedule handlers."""
+        from core.macro_events import MacroEventTrader
+
+        if not self._macro_trader:
+            self._macro_trader = MacroEventTrader(
+                self.desk.etoro, self.desk.notifier
+            )
+
+        today = datetime.utcnow().date()
+        events = self._macro_trader.get_upcoming_events(days_ahead=1)
+
+        for ev in events:
+            ev_date = ev["datetime"].date()
+            if ev_date != today:
+                continue
+
+            # Schedule handler 1 minute before release
+            trigger_time = ev["datetime"] - timedelta(minutes=1)
+            if trigger_time < datetime.utcnow():
+                # Already past — run immediately if within 5 min window
+                if (datetime.utcnow() - ev["datetime"]).total_seconds() < 300:
+                    logger.info(f"[MACRO] {ev['name']} releasing NOW — handling immediately")
+                    await self._handle_macro_event(ev["event"])
+                continue
+
+            job_id = f"macro_{ev['event']}_{ev_date}"
+            # Remove existing job if re-scheduled
+            try:
+                self.scheduler.remove_job(job_id)
+            except Exception:
+                pass
+
+            self.scheduler.add_job(
+                self._safe_run(
+                    lambda event_key=ev["event"]: self._handle_macro_event(event_key)
+                ),
+                "date",
+                run_date=trigger_time,
+                id=job_id,
+                name=f"Macro: {ev['name']}",
+            )
+            logger.info(
+                f"[MACRO] Scheduled {ev['name']} handler at {trigger_time.strftime('%H:%M')} UTC"
+            )
+            await self.desk.notifier.send_message(
+                f"🏛️ *MACRO ALERT*: {ev['name']} releasing today at "
+                f"{ev['datetime'].strftime('%H:%M')} UTC"
+            )
+
+    async def _handle_macro_event(self, event_key: str):
+        """Handle a macro data release — poll, compare, trade."""
+        if not self._macro_trader:
+            return
+
+        # Get portfolio value for sizing
+        portfolio_value = 15000  # Default
+        try:
+            state = self.desk.risk_manager.state
+            if state and state.equity > 0:
+                portfolio_value = state.equity
+        except Exception:
+            pass
+
+        result = await self._macro_trader.handle_event(event_key, portfolio_value)
+        logger.info(f"[MACRO] {event_key} result: {result.get('status')}")
 
     async def _weekend_maintenance(self):
         """Weekend maintenance: analytics, cleanup, ML report."""

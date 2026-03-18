@@ -848,9 +848,56 @@ class AlphaDesk:
 
     # ────────────────────── Risk & Summary ──────────────────────
 
+    # Software TP/SL (eToro API doesn't support modifying existing positions)
+    _TP_SL = {
+        3008: {"tp": 65.0, "sl": 52.0, "name": "XLE"},
+        1036: {"tp": 175.0, "sl": 143.0, "name": "XOM"},
+        6434: {"tp": 340.0, "sl": 280.0, "name": "GOOGL"},
+        1022: {"tp": 275.0, "sl": 220.0, "name": "TSLA"},
+        1137: {"tp": 205.0, "sl": 165.0, "name": "NVDA"},
+        4253: {"tp": 54.0, "sl": 40.0, "name": "SLB"},
+        3020: {"tp": 550.0, "sl": 470.0, "name": "GLD"},
+    }
+
+    async def _check_tp_sl(self):
+        """Close positions that hit TP or SL targets."""
+        try:
+            pnl_data = await self.etoro.get_pnl()
+            positions = pnl_data.get("clientPortfolio", {}).get("positions", [])
+            for pos in positions:
+                iid = pos.get("instrumentID", 0)
+                t = self._TP_SL.get(iid)
+                if not t:
+                    continue
+                rate = pos.get("unrealizedPnL", {}).get("currentRate", 0)
+                if rate <= 0:
+                    continue
+                pid = pos.get("positionID")
+                if rate >= t["tp"]:
+                    logger.info(f"TP HIT: {t['name']} @ {rate} >= {t['tp']}")
+                    try:
+                        await self.etoro.close_position(pid, iid)
+                        await self.notifier.send_message(
+                            f"🎯 *TAKE PROFIT* — {t['name']}\n"
+                            f"Chiusa @ ${rate:.2f} (target ${t['tp']})")
+                    except Exception as e:
+                        logger.error(f"TP close failed {t['name']}: {e}")
+                elif rate <= t["sl"]:
+                    logger.info(f"SL HIT: {t['name']} @ {rate} <= {t['sl']}")
+                    try:
+                        await self.etoro.close_position(pid, iid)
+                        await self.notifier.send_message(
+                            f"🛑 *STOP LOSS* — {t['name']}\n"
+                            f"Chiusa @ ${rate:.2f} (stop ${t['sl']})")
+                    except Exception as e:
+                        logger.error(f"SL close failed {t['name']}: {e}")
+        except Exception as e:
+            logger.debug(f"TP/SL check: {e}")
+
     async def run_risk_check(self):
         """Periodic risk monitoring (runs more frequently than signals)."""
         await self.update_portfolio_state()
+        await self._check_tp_sl()
         summary = self.risk_manager.get_portfolio_summary()
 
         # Check for drawdown reduction

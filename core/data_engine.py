@@ -3,6 +3,7 @@ AlphaDesk — Data Engine
 Aggregates market data from multiple sources for strategy consumption.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -16,20 +17,42 @@ logger = logging.getLogger("alphadesk.data")
 class DataEngine:
     """Aggregates and normalizes market data from multiple sources."""
 
+    CACHE_TTL_SECONDS = 600  # 10 min TTL — avoid hammering eToro API
+    API_THROTTLE_SECONDS = 0.3  # 300ms between API calls
+
     def __init__(self, etoro_client):
         self.etoro = etoro_client
         self._price_cache: Dict[str, pd.DataFrame] = {}
+        self._cache_timestamps: Dict[str, float] = {}
         self._fundamentals_cache: Dict[str, dict] = {}
         self._macro_cache: Dict[str, pd.Series] = {}
+        self._last_api_call = 0.0
 
     # ────────────────────── Price Data ──────────────────────
 
     async def get_ohlcv(self, instrument_id: int, symbol: str,
                          period: str = "OneDay", count: int = 252) -> pd.DataFrame:
-        """Fetch OHLCV data and return as DataFrame."""
+        """Fetch OHLCV data and return as DataFrame with TTL cache."""
+        import time as _time
+
+        # Skip instruments without valid ID (unmapped tickers)
+        if instrument_id is None:
+            return pd.DataFrame()
+
         cache_key = f"{symbol}_{period}_{count}"
+
+        # Return cached data if within TTL
         if cache_key in self._price_cache:
-            return self._price_cache[cache_key]
+            age = _time.time() - self._cache_timestamps.get(cache_key, 0)
+            if age < self.CACHE_TTL_SECONDS:
+                return self._price_cache[cache_key]
+
+        # Throttle: wait if we called API too recently
+        now = _time.time()
+        elapsed = now - self._last_api_call
+        if elapsed < self.API_THROTTLE_SECONDS:
+            await asyncio.sleep(self.API_THROTTLE_SECONDS - elapsed)
+        self._last_api_call = _time.time()
 
         try:
             candles = await self.etoro.get_candles(instrument_id, period, count)
@@ -48,8 +71,10 @@ class DataEngine:
                 df["date"] = pd.to_datetime(df["date"])
                 df.set_index("date", inplace=True)
 
+            import time as _time
             df = df.sort_index()
             self._price_cache[cache_key] = df
+            self._cache_timestamps[cache_key] = _time.time()
             return df
 
         except Exception as e:
@@ -484,8 +509,9 @@ class DataEngine:
     # ────────────────────── Cache Management ──────────────────────
 
     def clear_cache(self):
-        """Clear all cached data."""
+        """Clear all cached data (TTL cache auto-expires, this forces full refresh)."""
         self._price_cache.clear()
+        self._cache_timestamps.clear()
         self._fundamentals_cache.clear()
         self._macro_cache.clear()
-        logger.info("Data cache cleared")
+        logger.debug("Data cache cleared")
