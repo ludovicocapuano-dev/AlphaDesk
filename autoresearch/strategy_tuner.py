@@ -14,14 +14,14 @@ After modifying, run:
 MOMENTUM_PARAMS = {
     "breakout_period": 22,                # [10, 40]
     "trend_sma": 40,                      # [20, 100]
-    "long_trend_sma": 210,                # [100, 252]
+    "long_trend_sma": 190,                # [100, 252]
     "volume_threshold": 1.0,              # [0.5, 3.0]
     "atr_multiplier": 3.25,               # [1.0, 4.0]
     "min_momentum_3m": 0.03,              # [0.0, 0.15]
-    "rsi_overbought": 82,                 # [65, 85]
+    "rsi_overbought": 84,                 # [65, 85]
     "rsi_oversold": 25,                   # [20, 40]
     "max_positions": 12,                  # [3, 15]
-    "min_confidence": 0.49,               # [0.3, 0.8]
+    "min_confidence": 0.46,               # [0.3, 0.8]
     "min_rr_ratio": 1.0,                  # [0.8, 3.0]
     "tp_atr_multiplier": 5.5,             # [1.5, 8.0]
 }
