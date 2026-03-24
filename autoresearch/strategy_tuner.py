@@ -30,17 +30,17 @@ MOMENTUM_PARAMS = {
 # MEAN REVERSION STRATEGY
 # ═══════════════════════════════════════════════════════════════════
 MEAN_REVERSION_PARAMS = {
-    "z_entry_long": -2.8,         # [-3.0, -1.0] — buy when Z < this
-    "z_entry_short": 2.8,         # [1.0, 3.0] — sell when Z > this
-    "z_exit": 0.0,                # [0.0, 1.0] — close when Z returns to this
-    "z_stop": 4.5,                # [2.5, 5.0] — hard stop Z level
-    "min_lookback": 90,           # [30, 120]
-    "rsi_long_threshold": 22,     # [20, 45] — RSI < this for long entry
-    "rsi_short_threshold": 78,    # [55, 80] — RSI > this for short entry
-    "sl_atr_multiplier": 2.5,     # [1.0, 3.0]
-    "max_positions": 10,          # [3, 12]
-    "min_confidence": 0.4,        # [0.3, 0.8]
-    "min_rr_ratio": 2.0,          # [0.5, 2.5]
+    "z_entry_long": -2.05,                # [-3.0, -1.0]
+    "z_entry_short": 2.2,                 # [1.0, 3.0]
+    "z_exit": 0.08,                       # [0.0, 1.0]
+    "z_stop": 3.5,                        # [2.5, 5.0]
+    "min_lookback": 80,                   # [30, 120]
+    "rsi_long_threshold": 22,             # [20, 45]
+    "rsi_short_threshold": 78,            # [55, 80]
+    "sl_atr_multiplier": 1.5,             # [1.0, 3.0]
+    "max_positions": 10,                  # [3, 12]
+    "min_confidence": 0.6,                # [0.3, 0.8]
+    "min_rr_ratio": 1.5,                  # [0.5, 2.5]
 }
 
 # ═══════════════════════════════════════════════════════════════════
