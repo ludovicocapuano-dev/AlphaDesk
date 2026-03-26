@@ -12,16 +12,16 @@ After modifying, run:
 # MOMENTUM STRATEGY
 # ═══════════════════════════════════════════════════════════════════
 MOMENTUM_PARAMS = {
-    "breakout_period": 22,                # [10, 40]
+    "breakout_period": 20,                # [10, 40]
     "trend_sma": 40,                      # [20, 100]
-    "long_trend_sma": 190,                # [100, 252]
+    "long_trend_sma": 210,                # [100, 252]
     "volume_threshold": 1.0,              # [0.5, 3.0]
     "atr_multiplier": 3.25,               # [1.0, 4.0]
     "min_momentum_3m": 0.03,              # [0.0, 0.15]
-    "rsi_overbought": 84,                 # [65, 85]
+    "rsi_overbought": 82,                 # [65, 85]
     "rsi_oversold": 25,                   # [20, 40]
     "max_positions": 12,                  # [3, 15]
-    "min_confidence": 0.46,               # [0.3, 0.8]
+    "min_confidence": 0.49,               # [0.3, 0.8]
     "min_rr_ratio": 1.0,                  # [0.8, 3.0]
     "tp_atr_multiplier": 5.5,             # [1.5, 8.0]
 }
@@ -30,17 +30,17 @@ MOMENTUM_PARAMS = {
 # MEAN REVERSION STRATEGY
 # ═══════════════════════════════════════════════════════════════════
 MEAN_REVERSION_PARAMS = {
-    "z_entry_long": -2.05,                # [-3.0, -1.0]
+    "z_entry_long": -2.1,                 # [-3.0, -1.0]
     "z_entry_short": 2.2,                 # [1.0, 3.0]
     "z_exit": 0.08,                       # [0.0, 1.0]
     "z_stop": 3.5,                        # [2.5, 5.0]
-    "min_lookback": 80,                   # [30, 120]
+    "min_lookback": 30,                   # [30, 120]
     "rsi_long_threshold": 22,             # [20, 45]
     "rsi_short_threshold": 78,            # [55, 80]
-    "sl_atr_multiplier": 1.5,             # [1.0, 3.0]
+    "sl_atr_multiplier": 2.5,             # [1.0, 3.0]
     "max_positions": 10,                  # [3, 12]
     "min_confidence": 0.6,                # [0.3, 0.8]
-    "min_rr_ratio": 1.5,                  # [0.5, 2.5]
+    "min_rr_ratio": 1.0,                  # [0.5, 2.5]
 }
 
 # ═══════════════════════════════════════════════════════════════════
