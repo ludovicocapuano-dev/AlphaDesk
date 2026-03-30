@@ -47,15 +47,15 @@ MEAN_REVERSION_PARAMS = {
 # FACTOR MODEL STRATEGY
 # ═══════════════════════════════════════════════════════════════════
 FACTOR_MODEL_PARAMS = {
-    "value_weight": 0.30,         # [0.1, 0.6] — sum of 3 weights = 1.0
-    "quality_weight": 0.35,       # [0.1, 0.6]
-    "momentum_weight": 0.35,     # [0.1, 0.6]
-    "rebalance_days": 15,         # [5, 63] — rebalance frequency
-    "stop_loss_pct": 0.03,        # [0.03, 0.15] — hard stop %
-    "take_profit_pct": 0.30,      # [0.05, 0.30] — target %
-    "max_positions": 18,          # [5, 20]
-    "min_data_days": 60,          # [60, 252] — FIXED: was 252 (too high, caused 0 trades)
-    "min_composite": 0.30,        # [0.3, 0.7] — min composite score for entry
+    "value_weight": 0.25,                 # [0.1, 0.6]
+    "quality_weight": 0.47,               # [0.1, 0.6]
+    "momentum_weight": 0.27,              # [0.1, 0.6]
+    "rebalance_days": 19,                 # [5, 63]
+    "stop_loss_pct": 0.03,                # [0.03, 0.15]
+    "take_profit_pct": 0.3,               # [0.05, 0.3]
+    "max_positions": 15,                  # [5, 20]
+    "min_data_days": 60,                  # [60, 252]
+    "min_composite": 0.47,                # [0.3, 0.7]
 }
 
 # ═══════════════════════════════════════════════════════════════════
@@ -63,15 +63,15 @@ FACTOR_MODEL_PARAMS = {
 # ═══════════════════════════════════════════════════════════════════
 FX_CARRY_PARAMS = {
     "min_carry_spread": 0.01,             # [0.001, 0.03]
-    "carry_weight": 0.7,                  # [0.2, 0.9]
-    "momentum_weight": 0.3,               # [0.1, 0.8]
+    "carry_weight": 0.6,                  # [0.2, 0.9]
+    "momentum_weight": 0.5,               # [0.1, 0.8]
     "trend_filter_sma": 20,               # [20, 100]
-    "atr_stop_multiplier": 1.65,          # [1.0, 3.0]
+    "atr_stop_multiplier": 1.72,          # [1.0, 3.0]
     "min_composite_score": 0.1,           # [0.01, 0.15]
-    "max_positions": 6,                   # [2, 10]
-    "min_confidence": 0.6,                # [0.3, 0.8]
-    "min_rr_ratio": 1.5,                  # [0.5, 2.0]
-    "max_risk_per_pair": 0.01,            # [0.005, 0.04]
+    "max_positions": 8,                   # [2, 10]
+    "min_confidence": 0.45,               # [0.3, 0.8]
+    "min_rr_ratio": 1.0,                  # [0.5, 2.0]
+    "max_risk_per_pair": 0.03,            # [0.005, 0.04]
 }
 
 # ═══════════════════════════════════════════════════════════════════
