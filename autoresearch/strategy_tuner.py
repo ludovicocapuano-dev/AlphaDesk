@@ -32,14 +32,14 @@ MOMENTUM_PARAMS = {
 MEAN_REVERSION_PARAMS = {
     "z_entry_long": -2.1,                 # [-3.0, -1.0]
     "z_entry_short": 2.2,                 # [1.0, 3.0]
-    "z_exit": 0.08,                       # [0.0, 1.0]
+    "z_exit": 0.15,                       # [0.0, 1.0]
     "z_stop": 3.5,                        # [2.5, 5.0]
-    "min_lookback": 30,                   # [30, 120]
+    "min_lookback": 45,                   # [30, 120]
     "rsi_long_threshold": 22,             # [20, 45]
     "rsi_short_threshold": 78,            # [55, 80]
-    "sl_atr_multiplier": 2.5,             # [1.0, 3.0]
+    "sl_atr_multiplier": 1.8,             # [1.0, 3.0]
     "max_positions": 10,                  # [3, 12]
-    "min_confidence": 0.6,                # [0.3, 0.8]
+    "min_confidence": 0.5,                # [0.3, 0.8]
     "min_rr_ratio": 1.0,                  # [0.5, 2.5]
 }
 
@@ -47,15 +47,15 @@ MEAN_REVERSION_PARAMS = {
 # FACTOR MODEL STRATEGY
 # ═══════════════════════════════════════════════════════════════════
 FACTOR_MODEL_PARAMS = {
-    "value_weight": 0.25,                 # [0.1, 0.6]
-    "quality_weight": 0.47,               # [0.1, 0.6]
-    "momentum_weight": 0.27,              # [0.1, 0.6]
+    "value_weight": 0.3,                  # [0.1, 0.6]
+    "quality_weight": 0.46,               # [0.1, 0.6]
+    "momentum_weight": 0.24,              # [0.1, 0.6]
     "rebalance_days": 19,                 # [5, 63]
     "stop_loss_pct": 0.03,                # [0.03, 0.15]
-    "take_profit_pct": 0.3,               # [0.05, 0.3]
+    "take_profit_pct": 0.28,              # [0.05, 0.3]
     "max_positions": 15,                  # [5, 20]
     "min_data_days": 60,                  # [60, 252]
-    "min_composite": 0.47,                # [0.3, 0.7]
+    "min_composite": 0.46,                # [0.3, 0.7]
 }
 
 # ═══════════════════════════════════════════════════════════════════
