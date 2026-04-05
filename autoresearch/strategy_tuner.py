@@ -52,7 +52,7 @@ FACTOR_MODEL_PARAMS = {
     "momentum_weight": 0.24,              # [0.1, 0.6]
     "rebalance_days": 19,                 # [5, 63]
     "stop_loss_pct": 0.03,                # [0.03, 0.15]
-    "take_profit_pct": 0.28,              # [0.05, 0.3]
+    "take_profit_pct": 0.3,               # [0.05, 0.3]
     "max_positions": 15,                  # [5, 20]
     "min_data_days": 60,                  # [60, 252]
     "min_composite": 0.46,                # [0.3, 0.7]
