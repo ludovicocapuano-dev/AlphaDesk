@@ -48,15 +48,13 @@ def is_market_open() -> bool:
     if weekday == 6:
         return False  # Sunday before 22:00
 
-    # Mon-Fri: FX is always open, but check equities too
-    # If NYSE is open, both equity + FX are tradeable
-    # If NYSE is closed (e.g., holiday), only FX
+    # Signal scan only during NYSE hours (all active strategies are equity-based)
+    # NYSE: 14:30-21:00 UTC (EDT) or 14:30-21:00 UTC
     try:
-        equity_open = NYSE.is_trading_minute(now)
+        return NYSE.is_trading_minute(now)
     except Exception:
-        equity_open = False
-
-    return True  # Mon-Fri at least FX is open
+        # Fallback: approximate NYSE hours
+        return 14 <= now.hour < 21
 
 
 class AlphaDeskScheduler:
@@ -80,6 +78,7 @@ class AlphaDeskScheduler:
         self.bot = TelegramBot(self.desk)
         self._running = True
         self._macro_trader = None
+        self._news_radar = None
 
     def setup_schedules(self):
         """Configure all scheduled jobs."""
@@ -113,6 +112,16 @@ class AlphaDeskScheduler:
             id="risk_check",
             name="Risk Monitor",
             max_instances=1,
+        )
+
+        # ── News Radar (every 30 min, 24/7) ──
+        self.scheduler.add_job(
+            self._safe_run(self._run_news_radar),
+            IntervalTrigger(minutes=30),
+            id="news_radar",
+            name="News Radar",
+            max_instances=1,
+            misfire_grace_time=600,
         )
 
         # ── Daily Summary (21:00 UTC) ──
@@ -203,6 +212,28 @@ class AlphaDeskScheduler:
         if drift["needs_retrain"]:
             logger.warning("Major drift detected — triggering emergency retrain")
             await self.desk.run_daily_retrain()
+
+    async def _run_news_radar(self):
+        """Scan global news feeds for market-moving events."""
+        try:
+            if self._news_radar is None:
+                from core.news_radar import NewsRadar
+                self._news_radar = NewsRadar(
+                    notifier=self.desk.notifier,
+                    db_path=config.db_path,
+                )
+            report = await self._news_radar.scan()
+            if report.get("critical", 0) > 0:
+                logger.info(
+                    f"📡 News Radar: {report['critical']} CRITICAL events, "
+                    f"{report['alerted']} alerted"
+                )
+            # Invalidate regime cache if any critical event fired
+            # (forces regime recomputation on next signal scan)
+            if report.get("critical", 0) > 0 and hasattr(self.desk, "_current_regime"):
+                self.desk._current_regime = None
+        except Exception as e:
+            logger.warning(f"News Radar error: {e}")
 
     async def _schedule_macro_events(self):
         """Check BLS calendar for today's releases and schedule handlers."""
