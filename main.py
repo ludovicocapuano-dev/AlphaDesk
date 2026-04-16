@@ -191,18 +191,44 @@ class AlphaDesk:
             except Exception:
                 unrealized_pnl = 0
 
-            # Include mirror (copy trading) available cash
+            # IBKR path: use account summary directly (authoritative)
+            if hasattr(self.etoro, "get_account_summary"):
+                try:
+                    acct = await self.etoro.get_account_summary()
+                    net_liq = float(acct.get("NetLiquidation", 0))
+                    cash_val = float(acct.get("TotalCashValue", 0))
+                    if net_liq > 0:
+                        total_invested = sum(
+                            p.get("amount", p.get("initialAmountInDollars", 0))
+                            for p in positions
+                        )
+                        balance = {
+                            "cash": cash_val,
+                            "equity": net_liq,
+                            "invested": total_invested,
+                            "credit_usd": cash_val,
+                            "eur_balance": 0,
+                            "unrealized_pnl": unrealized_pnl,
+                        }
+                        self.risk_manager.update_state(balance, positions)
+                        logger.info(
+                            f"Portfolio: equity=${balance['equity']:,.2f}, "
+                            f"cash=${cash_val:.2f}, positions={len(positions)}"
+                        )
+                        return
+                except Exception as e:
+                    logger.debug(f"IBKR account summary failed, falling back: {e}")
+
+            # eToro path
             mirrors = cp.get("mirrors", [])
             mirror_cash = sum(m.get("availableAmount", 0) for m in mirrors)
 
-            # EUR wallet: eToro API only returns USD credit, but account may have
-            # EUR funds not visible via API. Read from env/config as override.
             eur_balance = float(os.getenv("ETORO_EUR_BALANCE", "0"))
             eur_usd_rate = float(os.getenv("ETORO_EUR_USD_RATE", "1.085"))
             eur_in_usd = eur_balance * eur_usd_rate
 
-            # Build balance dict for risk manager
-            total_invested = sum(p.get("initialAmountInDollars", 0) for p in positions)
+            total_invested = sum(p.get("initialAmountInDollars",
+                                         p.get("amount", 0)) for p in positions)
             total_cash = credit + mirror_cash + eur_in_usd
             balance = {
                 "cash": total_cash,
