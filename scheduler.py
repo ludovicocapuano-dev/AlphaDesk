@@ -124,6 +124,15 @@ class AlphaDeskScheduler:
             misfire_grace_time=600,
         )
 
+        # ── Correlation Monitor (every 4h, 24/7) ──
+        self.scheduler.add_job(
+            self._safe_run(self.desk.run_correlation_check),
+            IntervalTrigger(hours=4),
+            id="correlation_monitor",
+            name="Correlation Monitor",
+            max_instances=1,
+        )
+
         # ── Daily Summary (21:00 UTC) ──
         self.scheduler.add_job(
             self._safe_run(self.desk.run_daily_summary),

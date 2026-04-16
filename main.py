@@ -51,15 +51,30 @@ class AlphaDesk:
     """Main trading system orchestrator with self-learning ML ensemble."""
 
     def __init__(self):
-        # Core components
-        self.etoro = EtoroClient(
-            user_key=config.etoro.user_key,
-            api_key=config.etoro.api_key,
-            base_url=config.etoro.base_url,
-            environment=config.etoro.environment,
-            timeout=config.etoro.request_timeout,
-            max_retries=config.etoro.max_retries,
-        )
+        # Broker selection: etoro | ibkr_paper | ibkr_live
+        broker_mode = os.getenv("BROKER", "etoro").lower()
+
+        if broker_mode.startswith("ibkr"):
+            from core.ibkr_client import IBKRClient
+            port = 4002 if broker_mode == "ibkr_paper" else 4001
+            self.etoro = IBKRClient(
+                host=os.getenv("IBKR_HOST", "127.0.0.1"),
+                port=int(os.getenv("IBKR_PORT", str(port))),
+                client_id=int(os.getenv("IBKR_CLIENT_ID", "1")),
+                timeout=30,
+            )
+            logger.info(f"Broker: IBKR ({broker_mode}) via {self.etoro.host}:{self.etoro.port}")
+        else:
+            self.etoro = EtoroClient(
+                user_key=config.etoro.user_key,
+                api_key=config.etoro.api_key,
+                base_url=config.etoro.base_url,
+                environment=config.etoro.environment,
+                timeout=config.etoro.request_timeout,
+                max_retries=config.etoro.max_retries,
+            )
+            logger.info(f"Broker: eToro ({config.etoro.environment})")
+
         self.data_engine = DataEngine(self.etoro)
         self.risk_manager = PortfolioRiskManager(config.risk)
         self.position_sizer = PositionSizer(
@@ -118,6 +133,21 @@ class AlphaDesk:
         ]
         if HAS_PEAD:
             self.strategies.append(PEADStrategy(allocation_pct=0.10))
+
+        # Apply AutoResearch optimized parameters
+        try:
+            from autoresearch.strategy_tuner import get_params, apply_params
+            for strategy in self.strategies:
+                try:
+                    params = get_params(strategy.name)
+                    apply_params(strategy, params)
+                    logger.info(f"[{strategy.name}] Applied tuned params")
+                except KeyError:
+                    pass  # Strategy not in tuner (e.g., PEAD)
+                except Exception as e:
+                    logger.warning(f"[{strategy.name}] Failed to apply params: {e}")
+        except Exception as e:
+            logger.warning(f"AutoResearch params not available: {e}")
 
     async def initialize(self):
         """Initialize: load instrument IDs, update portfolio state."""
@@ -533,8 +563,8 @@ class AlphaDesk:
                     if (strategy.name == "momentum" and
                             not self._current_regime.is_favorable_for_momentum and
                             self._current_regime.data.get("trend_regime") not in ("weak_up", "strong_up")):
-                        logger.info(f"[{strategy.name}] Skipped — unfavorable regime")
-                        continue
+                        logger.info(f"[{strategy.name}] Unfavorable regime — reducing allocation 50%")
+                        strategy.allocation_pct *= 0.5
 
                 positions = [p for p in self.risk_manager.state.positions
                             if p.get("strategy_tag") == strategy.name]
@@ -660,15 +690,52 @@ class AlphaDesk:
                     logger.warning(f"Wide spread for {signal.symbol}: {spread_info['reason']} — skipping")
                     continue
 
-                # ── Execute trade ──
+                # ── Dedup: skip if we already have a position in this instrument ──
+                existing_positions = self.risk_manager.state.positions or []
+                already_holds = any(
+                    p.get("instrumentID") == etoro_id or p.get("instrumentId") == etoro_id
+                    for p in existing_positions
+                )
+                if already_holds:
+                    logger.info(f"Skipping {signal.symbol} — already holding position")
+                    continue
+
+                # ── Circuit breaker gate ──
+                if self._circuit_breaker and not self._circuit_breaker.can_open_position():
+                    cb_state = self._circuit_breaker.get_status()
+                    logger.warning(
+                        f"🚧 CIRCUIT BREAKER (tier {cb_state.get('tier')}): "
+                        f"skipping {signal.symbol} — "
+                        f"session dd {cb_state.get('drawdown_pct', 0):.1%}"
+                    )
+                    continue
+
+                # ── Execute trade (no SL/TP via API — managed by software TP/SL) ──
                 is_buy = signal.signal.value in ("BUY", "STRONG_BUY", 1, 2)
                 result = await self.etoro.open_position(
                     instrument_id=etoro_id,
                     is_buy=is_buy,
                     amount=sizing["dollar_amount"],
-                    stop_loss=signal.stop_loss,
-                    take_profit=signal.take_profit,
                 )
+
+                # Verify order was actually executed (not just pending/cancelled)
+                order_status = result.get("statusID", result.get("orderForOpen", {}).get("statusID", 0))
+                await asyncio.sleep(3)  # Wait for eToro to process
+
+                # Check if position actually appeared in portfolio
+                portfolio = await self.etoro.get_portfolio()
+                live_positions = portfolio.get("clientPortfolio", {}).get("positions", [])
+                position_exists = any(
+                    p.get("instrumentID") == etoro_id
+                    for p in live_positions
+                )
+
+                if not position_exists:
+                    logger.warning(
+                        f"⚠️ PHANTOM ORDER: {signal.symbol} (id={etoro_id}) — "
+                        f"order accepted but position NOT found in portfolio. Skipping."
+                    )
+                    continue
 
                 # Log trade
                 etoro_pos_id = result.get("positionId") or result.get("positionID")
@@ -848,7 +915,7 @@ class AlphaDesk:
 
     # ────────────────────── Risk & Summary ──────────────────────
 
-    # Software TP/SL (eToro API doesn't support modifying existing positions)
+    # Software TP/SL with trailing stop, time exit, partial TP
     _TP_SL = {
         3008: {"tp": 65.0, "sl": 52.0, "name": "XLE"},
         1036: {"tp": 175.0, "sl": 143.0, "name": "XOM"},
@@ -859,38 +926,186 @@ class AlphaDesk:
         3020: {"tp": 550.0, "sl": 470.0, "name": "GLD"},
     }
 
-    async def _check_tp_sl(self):
-        """Close positions that hit TP or SL targets."""
+    # Trailing stop tiers: (pnl_pct_threshold, lock_in_pct)
+    _TRAILING_TIERS = [
+        (0.15, 0.10),  # +15% PnL → lock in +10%
+        (0.10, 0.05),  # +10% PnL → lock in +5%
+        (0.05, 0.00),  # +5% PnL  → lock in breakeven
+    ]
+    _TIME_EXIT_DAYS = 30
+    _TIME_EXIT_FLAT_PCT = 0.02
+    _PARTIAL_TP_PCT = 0.50
+    _partial_tp_done: dict = {}
+
+    _circuit_breaker = None
+    _correlation_monitor = None
+
+    async def _check_circuit_breaker(self):
+        """Three-tier drawdown protection. Called from run_risk_check."""
         try:
+            if self._circuit_breaker is None:
+                from core.circuit_breaker import CircuitBreaker
+                self._circuit_breaker = CircuitBreaker(
+                    db_path=config.db_path,
+                    notifier=self.notifier,
+                )
+
+            state = self.risk_manager.state
+            equity = state.equity if state else 0
+            if equity <= 0:
+                return
+
+            positions = state.positions if state else []
+            await self._circuit_breaker.check(equity, positions, self.etoro)
+        except Exception as e:
+            logger.debug(f"Circuit breaker check error: {e}")
+
+    async def run_correlation_check(self):
+        """Every 4h: compute rolling correlation matrix of portfolio."""
+        try:
+            if self._correlation_monitor is None:
+                from core.correlation_monitor import CorrelationMonitor
+                self._correlation_monitor = CorrelationMonitor(
+                    db_path=config.db_path,
+                    notifier=self.notifier,
+                )
+
+            state = self.risk_manager.state
+            positions = state.positions if state else []
+            if len(positions) < 3:
+                return None
+            return await self._correlation_monitor.analyze(positions)
+        except Exception as e:
+            logger.debug(f"Correlation check error: {e}")
+            return None
+
+    async def _check_tp_sl(self):
+        """Enhanced exit logic: trailing stop, time-based exit, partial TP."""
+        try:
+            portfolio_data = await self.etoro.get_portfolio()
+            portfolio_positions = portfolio_data.get("clientPortfolio", {}).get("positions", [])
             pnl_data = await self.etoro.get_pnl()
-            positions = pnl_data.get("clientPortfolio", {}).get("positions", [])
-            for pos in positions:
+            pnl_positions = pnl_data.get("clientPortfolio", {}).get("positions", [])
+
+            pnl_by_pid = {p.get("positionID"): p for p in pnl_positions if p.get("positionID")}
+
+            from collections import defaultdict
+            positions_by_iid = defaultdict(list)
+            for p in portfolio_positions:
+                iid = p.get("instrumentID", 0)
+                if iid in self._TP_SL:
+                    positions_by_iid[iid].append(p)
+
+            for pos in portfolio_positions:
                 iid = pos.get("instrumentID", 0)
                 t = self._TP_SL.get(iid)
                 if not t:
                     continue
-                rate = pos.get("unrealizedPnL", {}).get("currentRate", 0)
-                if rate <= 0:
-                    continue
+
                 pid = pos.get("positionID")
-                if rate >= t["tp"]:
-                    logger.info(f"TP HIT: {t['name']} @ {rate} >= {t['tp']}")
+                open_rate = pos.get("openRate", 0)
+                amount = pos.get("amount", 0)
+                open_dt_str = pos.get("openDateTime")
+
+                pnl_pos = pnl_by_pid.get(pid, {})
+                unrealized = pnl_pos.get("unrealizedPnL", {})
+                current_rate = unrealized.get("currentRate", 0)
+                pnl_dollars = unrealized.get("pnL", 0)
+
+                if current_rate <= 0 or open_rate <= 0:
+                    continue
+
+                pnl_pct = pnl_dollars / amount if amount > 0 else 0
+
+                # ── Full Take Profit ──
+                if current_rate >= t["tp"]:
+                    logger.info(f"TP HIT: {t['name']} @ {current_rate} >= {t['tp']}")
                     try:
                         await self.etoro.close_position(pid, iid)
                         await self.notifier.send_message(
                             f"🎯 *TAKE PROFIT* — {t['name']}\n"
-                            f"Chiusa @ ${rate:.2f} (target ${t['tp']})")
+                            f"Chiusa @ ${current_rate:.2f} (target ${t['tp']})\n"
+                            f"PnL: ${pnl_dollars:+.2f} ({pnl_pct:+.1%})")
+                        self._partial_tp_done.pop(pid, None)
                     except Exception as e:
                         logger.error(f"TP close failed {t['name']}: {e}")
-                elif rate <= t["sl"]:
-                    logger.info(f"SL HIT: {t['name']} @ {rate} <= {t['sl']}")
+                    continue
+
+                # ── Partial Take Profit (50% of way to TP) ──
+                if pid not in self._partial_tp_done:
+                    partial_target = open_rate + (t["tp"] - open_rate) * self._PARTIAL_TP_PCT
+                    if current_rate >= partial_target and len(positions_by_iid.get(iid, [])) > 1:
+                        smallest = min(positions_by_iid[iid], key=lambda p: p.get("amount", float("inf")))
+                        smallest_pid = smallest.get("positionID")
+                        smallest_amt = smallest.get("amount", 0)
+                        logger.info(f"PARTIAL TP: {t['name']} pos {smallest_pid} (${smallest_amt:.0f})")
+                        try:
+                            await self.etoro.close_position(smallest_pid, iid)
+                            await self.notifier.send_message(
+                                f"🎯 *PARTIAL TP* — {t['name']}\n"
+                                f"Chiusa minore (${smallest_amt:.0f}) @ ${current_rate:.2f}")
+                            for p in positions_by_iid[iid]:
+                                self._partial_tp_done[p.get("positionID")] = True
+                            positions_by_iid[iid] = [
+                                p for p in positions_by_iid[iid] if p.get("positionID") != smallest_pid]
+                        except Exception as e:
+                            logger.error(f"Partial TP failed {t['name']}: {e}")
+                        if smallest_pid == pid:
+                            continue
+
+                # ── Trailing Stop ──
+                effective_sl = t["sl"]
+                trailing_label = None
+                for tier_pct, lock_pct in self._TRAILING_TIERS:
+                    if pnl_pct >= tier_pct:
+                        trailing_sl = open_rate * (1 + lock_pct)
+                        if trailing_sl > effective_sl:
+                            effective_sl = trailing_sl
+                            trailing_label = f"trailing +{lock_pct:.0%}" if lock_pct > 0 else "breakeven"
+                        break
+
+                if current_rate <= effective_sl:
+                    sl_type = f"TRAILING STOP ({trailing_label})" if trailing_label else "STOP LOSS"
+                    logger.info(f"{sl_type}: {t['name']} @ {current_rate} <= {effective_sl:.2f}")
                     try:
                         await self.etoro.close_position(pid, iid)
                         await self.notifier.send_message(
-                            f"🛑 *STOP LOSS* — {t['name']}\n"
-                            f"Chiusa @ ${rate:.2f} (stop ${t['sl']})")
+                            f"🛑 *{sl_type}* — {t['name']}\n"
+                            f"Chiusa @ ${current_rate:.2f} (stop ${effective_sl:.2f})\n"
+                            f"PnL: ${pnl_dollars:+.2f} ({pnl_pct:+.1%})")
+                        self._partial_tp_done.pop(pid, None)
                     except Exception as e:
-                        logger.error(f"SL close failed {t['name']}: {e}")
+                        logger.error(f"{sl_type} close failed {t['name']}: {e}")
+                    continue
+
+                # ── Time-based Exit (30+ days) ──
+                if open_dt_str:
+                    try:
+                        from datetime import timezone
+                        open_dt = datetime.fromisoformat(open_dt_str.replace("Z", "+00:00"))
+                        days_held = (datetime.now(timezone.utc) - open_dt).days
+                        if days_held >= self._TIME_EXIT_DAYS:
+                            if pnl_pct < -self._TIME_EXIT_FLAT_PCT:
+                                reason = f"red ({pnl_pct:+.1%}) after {days_held}d"
+                            elif abs(pnl_pct) <= self._TIME_EXIT_FLAT_PCT:
+                                reason = f"flat ({pnl_pct:+.1%}) after {days_held}d"
+                            else:
+                                reason = None
+                            if reason:
+                                logger.info(f"TIME EXIT: {t['name']} — {reason}")
+                                try:
+                                    await self.etoro.close_position(pid, iid)
+                                    await self.notifier.send_message(
+                                        f"⏰ *TIME EXIT* — {t['name']}\n"
+                                        f"Chiusa @ ${current_rate:.2f} — {reason}\n"
+                                        f"PnL: ${pnl_dollars:+.2f}")
+                                    self._partial_tp_done.pop(pid, None)
+                                except Exception as e:
+                                    logger.error(f"Time exit failed {t['name']}: {e}")
+                                continue
+                    except (ValueError, TypeError):
+                        pass
+
         except Exception as e:
             logger.debug(f"TP/SL check: {e}")
 
@@ -898,6 +1113,7 @@ class AlphaDesk:
         """Periodic risk monitoring (runs more frequently than signals)."""
         await self.update_portfolio_state()
         await self._check_tp_sl()
+        await self._check_circuit_breaker()
         summary = self.risk_manager.get_portfolio_summary()
 
         # Check for drawdown reduction
