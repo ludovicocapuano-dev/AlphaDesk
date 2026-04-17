@@ -50,24 +50,60 @@ logger = logging.getLogger("alphadesk.news_radar")
 # ══════════════════════════════════════════════════════════════════════
 
 RSS_FEEDS: Dict[str, str] = {
-    # Macro & markets
+    # ─── TIER 1: Financial primary (highest trust, weight 1.3) ───
     "reuters_business":    "https://feeds.reuters.com/reuters/businessNews",
-    "cnbc_markets":        "https://www.cnbc.com/id/20409666/device/rss/rss.html",
+    "reuters_markets":     "https://feeds.reuters.com/reuters/INbusinessNews",
     "ft_markets":          "https://www.ft.com/markets?format=rss",
-    "marketwatch_top":     "https://feeds.marketwatch.com/marketwatch/topstories/",
     "wsj_markets":         "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
-    # Central banks & policy
+    "wsj_worldmarkets":    "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
+    "cnbc_markets":        "https://www.cnbc.com/id/20409666/device/rss/rss.html",
+    "cnbc_econ":           "https://www.cnbc.com/id/20910258/device/rss/rss.html",
+    "bloomberg_markets":   "https://feeds.bloomberg.com/markets/news.rss",
+    "bloomberg_economics": "https://feeds.bloomberg.com/economics/news.rss",
+    # ─── TIER 2: Specialized financial (trust 1.1) ───
+    "marketwatch_top":     "https://feeds.marketwatch.com/marketwatch/topstories/",
+    "marketwatch_realtime":"https://feeds.marketwatch.com/marketwatch/realtimeheadlines/",
+    "yahoo_finance":       "https://finance.yahoo.com/news/rssindex",
+    "investing_com":       "https://www.investing.com/rss/news.rss",
+    "seekingalpha":        "https://seekingalpha.com/market_currents.xml",
+    # ─── TIER 3: Official sources (trust 1.2) ───
     "fed_press":           "https://www.federalreserve.gov/feeds/press_all.xml",
+    "fed_speeches":        "https://www.federalreserve.gov/feeds/speeches.xml",
     "ecb_press":           "https://www.ecb.europa.eu/rss/press.html",
-    # Geopolitics (war, sanctions)
+    "bls":                 "https://www.bls.gov/feed/news_release.rss",
+    "treasury":            "https://home.treasury.gov/system/files/126/feed.xml",
+    # ─── TIER 4: Geopolitics (trust 0.7 — context, not primary) ───
     "aljazeera_all":       "https://www.aljazeera.com/xml/rss/all.xml",
     "reuters_world":       "https://feeds.reuters.com/Reuters/worldNews",
-    # Commodities (energy)
+    "bbc_business":        "http://feeds.bbci.co.uk/news/business/rss.xml",
+    # ─── TIER 5: Commodities (trust 0.9) ───
     "oilprice":            "https://oilprice.com/rss/main",
-    # Tech (for our NVDA/META/GOOGL/MSFT positions)
+    # ─── TIER 6: Sector-specific (trust 1.0) ───
     "cnbc_tech":           "https://www.cnbc.com/id/19854910/device/rss/rss.html",
-    # Economic data (macro surprises)
-    "bls":                 "https://www.bls.gov/feed/news_release.rss",
+    "cnbc_energy":         "https://www.cnbc.com/id/19836768/device/rss/rss.html",
+}
+
+
+# Trust weight per source. Applied as multiplier to score.
+SOURCE_TRUST: Dict[str, float] = {
+    # Tier 1 — financial primary
+    "reuters_business": 1.3, "reuters_markets": 1.3,
+    "ft_markets": 1.3, "wsj_markets": 1.3, "wsj_worldmarkets": 1.2,
+    "cnbc_markets": 1.3, "cnbc_econ": 1.3,
+    "bloomberg_markets": 1.3, "bloomberg_economics": 1.3,
+    # Tier 2 — specialized
+    "marketwatch_top": 1.1, "marketwatch_realtime": 1.1,
+    "yahoo_finance": 1.0, "investing_com": 1.0,
+    "seekingalpha": 1.0,
+    # Tier 3 — official
+    "fed_press": 1.2, "fed_speeches": 1.2,
+    "ecb_press": 1.2, "bls": 1.2, "treasury": 1.2,
+    # Tier 4 — geopolitics (context, not primary)
+    "aljazeera_all": 0.7, "reuters_world": 1.1, "bbc_business": 1.0,
+    # Tier 5 — commodities
+    "oilprice": 0.9,
+    # Tier 6 — sector
+    "cnbc_tech": 1.0, "cnbc_energy": 1.0,
 }
 
 
@@ -318,7 +354,10 @@ class NewsRadar:
                     except Exception:
                         pass
 
-                score, matched = self.score_item(title, summary)
+                raw_score, matched = self.score_item(title, summary)
+                # Apply source trust weight
+                trust = SOURCE_TRUST.get(source, 1.0)
+                score = int(round(raw_score * trust))
                 if score < NOTEWORTHY_THRESHOLD:
                     continue  # Below noise floor
 
@@ -417,11 +456,17 @@ class NewsRadar:
         # Sort by score desc
         new_items.sort(key=lambda x: x.score, reverse=True)
 
-        # Alert on critical
+        # Alert on critical — cap max 1 per source, max 3 total per scan
         critical = [it for it in new_items if it.score >= CRITICAL_THRESHOLD]
         alerted = 0
-        for item in critical[:3]:  # Cap at 3 alerts per scan to avoid spam
+        sources_alerted: Set[str] = set()
+        for item in critical:
+            if alerted >= 3:
+                break
+            if item.source in sources_alerted:
+                continue  # Already alerted from this source
             await self._send_alert(item)
+            sources_alerted.add(item.source)
             alerted += 1
 
         self._save_state()
