@@ -703,6 +703,19 @@ class AlphaDesk:
                 # Apply regime multiplier
                 sizing["dollar_amount"] *= size_multiplier
 
+                # ── Concentration cap: reject if size > max_position_pct_nav ──
+                cap_pct = self.risk_manager.config.max_position_pct_nav
+                equity = self.risk_manager.state.equity
+                size_pct = sizing["dollar_amount"] / equity if equity > 0 else 0
+                if size_pct > cap_pct:
+                    logger.warning(
+                        f"CONCENTRATION CAP: {signal.symbol} sized "
+                        f"${sizing['dollar_amount']:,.0f} = {size_pct:.1%} of NAV "
+                        f"> {cap_pct:.0%} cap — rejected (autonomous)"
+                    )
+                    self._log_signal_with_features(signal, ml_result, regime_data, executed=False)
+                    continue
+
                 # ── Log signal with features (before execution) ──
                 signal_id = self._log_signal_with_features(
                     signal, ml_result, regime_data, executed=True
@@ -911,6 +924,14 @@ class AlphaDesk:
                     if exit_signal:
                         pos_id = position.get("positionID", position.get("positionId"))
                         inst_id = position.get("instrumentID", position.get("instrumentId"))
+
+                        allowed, why = self.risk_manager.check_can_close(
+                            position, "strategy_exit"
+                        )
+                        if not allowed:
+                            logger.info(f"DISCIPLINE BLOCK: {symbol} — {why}")
+                            continue
+
                         await self.etoro.close_position(pos_id, inst_id)
 
                         # Mark closed in local DB

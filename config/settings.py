@@ -48,6 +48,11 @@ class RiskConfig:
     slippage_budget_fx: float = 0.0005     # 0.05%
     mandatory_stop_loss: bool = True
 
+    # Discipline gates (codified from feedback_trading_discipline.md)
+    min_hold_hours: int = 48               # min hold before strategy-driven close
+    pre_market_buffer_minutes: int = 15    # wait after market open before closing
+    max_position_pct_nav: float = 0.25     # autonomous reject if size > 25% NAV
+
     # Graduated drawdown circuit breakers
     drawdown_level_1: float = 0.05   # -5%  → warning, tighten stops 20%
     drawdown_level_2: float = 0.10   # -10% → 75% size, no momentum

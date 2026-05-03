@@ -5,13 +5,21 @@ VaR, drawdown control, correlation limits, circuit breakers.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger("alphadesk.risk.portfolio")
+
+# Close reasons that bypass discipline gates — these are explicit hard exits
+# where holding longer would amplify loss or violate sizing rules.
+HARD_EXIT_REASONS = frozenset({
+    "stop_loss", "take_profit", "trailing_stop", "partial_tp",
+    "drawdown_circuit_breaker", "circuit_breaker",
+    "manual_override",
+})
 
 
 @dataclass
@@ -157,9 +165,91 @@ class PortfolioRiskManager:
         if not corr_ok:
             return False, corr_msg
 
-        # 7. Mandatory stop loss
-        if self.config.mandatory_stop_loss and signal.stop_loss == signal.entry_price:
-            return False, "Trade rejected: no stop loss defined"
+        # 7. Mandatory stop loss — reject NULL/0/equal-to-entry, all "no SL" cases
+        if self.config.mandatory_stop_loss:
+            sl = signal.stop_loss
+            if sl is None or sl == 0 or sl == signal.entry_price:
+                return False, "Trade rejected: no stop loss defined"
+
+        return True, "OK"
+
+    def check_can_close(self, position: dict, reason: str) -> Tuple[bool, str]:
+        """
+        Discipline gate before closing a position.
+
+        Hard exits (stop_loss, take_profit, trailing_stop, circuit breakers,
+        manual_override) bypass the gate — they represent risk-driven decisions
+        where waiting would compound damage.
+
+        All other reasons (strategy_exit, ai_decision, time_exit, rebalance)
+        must satisfy:
+          1. min_hold_hours since open (default 48h) — prevents same-day reversal
+          2. Market open + pre_market_buffer_minutes (default 15min) — avoids
+             pre-market close where stock has not yet validated direction
+
+        Returns (allowed, reason_str).
+        Fails open with a warning if openDateTime is missing.
+        """
+        if reason in HARD_EXIT_REASONS:
+            return True, f"OK: {reason} bypasses discipline"
+
+        # ── Min hold period ──
+        open_dt_str = (
+            position.get("openDateTime")
+            or position.get("open_time")
+            or position.get("open_datetime")
+        )
+        min_hold = getattr(self.config, "min_hold_hours", 48)
+        symbol = position.get("symbol") or position.get("name") or "?"
+
+        if open_dt_str:
+            try:
+                open_dt = datetime.fromisoformat(str(open_dt_str).replace("Z", "+00:00"))
+                if open_dt.tzinfo is None:
+                    open_dt = open_dt.replace(tzinfo=timezone.utc)
+                hours_held = (datetime.now(timezone.utc) - open_dt).total_seconds() / 3600
+                if hours_held < min_hold:
+                    return False, (
+                        f"MIN_HOLD: {symbol} opened {hours_held:.1f}h ago, "
+                        f"need {min_hold}h ({reason})"
+                    )
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    f"check_can_close: bad openDateTime for {symbol}: "
+                    f"{open_dt_str!r} ({e}) — failing open"
+                )
+        else:
+            logger.warning(
+                f"check_can_close: no openDateTime for {symbol} — failing open"
+            )
+
+        # ── Pre-market / open buffer ──
+        if symbol and symbol != "?":
+            try:
+                from core.market_hours import (
+                    is_market_open, get_asset_class, MARKET_SCHEDULES,
+                )
+            except ImportError:
+                logger.debug("check_can_close: market_hours unavailable, skipping buffer")
+                return True, "OK"
+
+            now = datetime.now(timezone.utc)
+            asset_class = get_asset_class(symbol)
+            if not is_market_open(symbol=symbol, now=now):
+                return False, f"PRE_MARKET: {symbol} market closed ({reason})"
+
+            sched = MARKET_SCHEDULES.get(asset_class)
+            buffer = getattr(self.config, "pre_market_buffer_minutes", 15)
+            if sched and not sched.get("continuous") and buffer > 0:
+                open_h, open_m = sched["open"]
+                open_minutes = open_h * 60 + open_m
+                now_minutes = now.hour * 60 + now.minute
+                if now_minutes < open_minutes + buffer:
+                    mins_until = open_minutes + buffer - now_minutes
+                    return False, (
+                        f"OPEN_BUFFER: {symbol} within {buffer}min of open, "
+                        f"wait {mins_until}min ({reason})"
+                    )
 
         return True, "OK"
 

@@ -691,8 +691,16 @@ class AIPortfolioManager:
                        "rate_regime", "correlation_regime", "hmm_regime"):
                 enriched_md.setdefault(k, regime.get(k, "N/A"))
 
-        # Build portfolio_context for agents
-        pc = dict(portfolio_state or {})
+        # Build portfolio_context for agents — handle dataclass, dict, or None
+        if portfolio_state is None:
+            pc = {}
+        elif isinstance(portfolio_state, dict):
+            pc = dict(portfolio_state)
+        else:
+            from dataclasses import asdict, is_dataclass
+            pc = asdict(portfolio_state) if is_dataclass(portfolio_state) else (
+                vars(portfolio_state).copy() if hasattr(portfolio_state, "__dict__") else {}
+            )
         if regime:
             pc["correlation_regime"] = regime.get("correlation_regime", "normal")
         pc.setdefault("regime", regime or {})
