@@ -315,12 +315,40 @@ class OutcomeLabeler:
                     if df is None or df.empty:
                         continue
 
+                    # Normalize close column (data_engine may return 'close'/'Close')
+                    if "close" not in df.columns:
+                        if "Close" in df.columns:
+                            df = df.rename(columns={"Close": "close"})
+                        else:
+                            continue
+
+                    # Normalize index to DatetimeIndex (sometimes get_ohlcv returns
+                    # a RangeIndex with timestamps in a column)
+                    if not isinstance(df.index, pd.DatetimeIndex):
+                        ts_col = next(
+                            (c for c in ("timestamp", "datetime", "date", "Date")
+                             if c in df.columns),
+                            None,
+                        )
+                        if ts_col is None:
+                            continue
+                        df = df.copy()
+                        df.index = pd.to_datetime(df[ts_col], utc=True, errors="coerce")
+                        df = df[df.index.notna()]
+                        if df.empty:
+                            continue
+
                     close = df["close"].reset_index(drop=True)
                     if len(close) < self.TB_LOOKBACK + self.TB_MAX_HOLDING:
                         continue  # not enough data yet
 
-                    # Find the bar closest to entry time
+                    # Align target timestamp tz/precision with df.index
                     target_ts = pd.Timestamp(signal_time)
+                    if df.index.tz is not None and target_ts.tz is None:
+                        target_ts = target_ts.tz_localize("UTC").tz_convert(df.index.tz)
+                    elif df.index.tz is None and target_ts.tz is not None:
+                        target_ts = target_ts.tz_localize(None)
+
                     idx = df.index.get_indexer([target_ts], method="nearest")[0]
                     if idx < 0 or idx >= len(close):
                         continue

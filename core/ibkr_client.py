@@ -91,6 +91,46 @@ def _symbol_for(instrument_id: int) -> Optional[str]:
     return _VIRTUAL_ID_TO_SYMBOL.get(instrument_id)
 
 
+def _build_symbol_to_etoro_id() -> Dict[str, int]:
+    """Canonical symbol → eToro instrument_id mapping from config.instruments.
+
+    Required so get_portfolio emits the same ID main.py uses (get_instrument_id),
+    otherwise position-matching after order open fails with PHANTOM ORDER.
+    """
+    mapping: Dict[str, int] = {}
+    try:
+        from config.instruments import US_EQUITIES, EU_EQUITIES, FX_PAIRS
+        for src in (US_EQUITIES, EU_EQUITIES, FX_PAIRS):
+            for sym, meta in src.items():
+                if isinstance(meta, dict) and "etoro_id" in meta:
+                    mapping[sym] = meta["etoro_id"]
+        try:
+            from config.instruments import ETFS
+            for sym, meta in ETFS.items():
+                if isinstance(meta, dict) and "etoro_id" in meta:
+                    mapping.setdefault(sym, meta["etoro_id"])
+        except (ImportError, AttributeError):
+            pass
+        try:
+            from config.instruments import COMMODITIES
+            for sym, meta in COMMODITIES.items():
+                if isinstance(meta, dict) and "etoro_id" in meta:
+                    mapping.setdefault(sym, meta["etoro_id"])
+        except (ImportError, AttributeError):
+            pass
+    except ImportError:
+        pass
+    return mapping
+
+
+SYMBOL_TO_ETORO_ID: Dict[str, int] = _build_symbol_to_etoro_id()
+
+
+def _canonical_id_for(symbol: str) -> int:
+    """Return canonical eToro instrument_id if known, else a stable virtual ID."""
+    return SYMBOL_TO_ETORO_ID.get(symbol) or _virtual_id_for(symbol)
+
+
 # Pre-populate the mapping so it's deterministic at startup
 for _sym in INSTRUMENT_SPECS.keys():
     _virtual_id_for(_sym)
@@ -319,7 +359,7 @@ class IBKRClient:
         positions_out = []
         for pos in positions:
             symbol = pos.contract.symbol
-            vid = _virtual_id_for(symbol)
+            vid = _canonical_id_for(symbol)
             item = items_by_conid.get(pos.contract.conId)
 
             # IBKR position: avgCost is cost basis per share
@@ -391,7 +431,7 @@ class IBKRClient:
                 if t.orderStatus.status in ("Filled", "Cancelled"):
                     closed.append({
                         "symbol": t.contract.symbol,
-                        "instrumentID": _virtual_id_for(t.contract.symbol),
+                        "instrumentID": _canonical_id_for(t.contract.symbol),
                         "orderID": t.order.orderId,
                         "action": t.order.action,
                         "amount": float(t.order.totalQuantity),

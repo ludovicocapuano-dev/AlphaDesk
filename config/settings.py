@@ -131,6 +131,9 @@ class AppConfig:
     db_path: str = "data/alphadesk.db"
     log_path: str = "logs/alphadesk.log"
 
+    # AI agents
+    ai_daily_token_budget: int = int(os.getenv("ANTHROPIC_DAILY_TOKEN_BUDGET", "150000"))
+
 
 # Singleton
 config = AppConfig()

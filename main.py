@@ -105,7 +105,10 @@ class AlphaDesk:
             from core.ai_agents import AIPortfolioManager
             api_key = os.getenv("ANTHROPIC_API_KEY", "")
             if api_key:
-                self.ai_manager = AIPortfolioManager(db_path=config.db_path)
+                self.ai_manager = AIPortfolioManager(
+                    db_path=config.db_path,
+                    daily_token_budget=config.ai_daily_token_budget,
+                )
                 logger.info("AI Agent Manager: ACTIVE")
             else:
                 self.ai_manager = None
