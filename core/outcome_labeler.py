@@ -326,7 +326,8 @@ class OutcomeLabeler:
                     # a RangeIndex with timestamps in a column)
                     if not isinstance(df.index, pd.DatetimeIndex):
                         ts_col = next(
-                            (c for c in ("timestamp", "datetime", "date", "Date")
+                            (c for c in ("timestamp", "datetime", "date", "Date",
+                                         "fromDate", "FromDate")
                              if c in df.columns),
                             None,
                         )
@@ -397,35 +398,72 @@ class OutcomeLabeler:
 
     async def _get_price_at_time(self, data_engine, symbol: str,
                                    target_time: datetime) -> Optional[float]:
-        """Get the closing price closest to target_time."""
-        # Try to get intraday data
+        """Get the closing price closest to target_time.
+
+        Auto-extends fetch window for historical targets, with tz alignment
+        between target_time and df.index. Returns None if target falls outside
+        the available data range by more than tolerance.
+        """
         try:
-            # For equities, use daily close as approximation
-            # In production, use intraday candles from eToro WebSocket
+            # Resolve canonical instrument_id across equities, FX, ETFs, commodities
             from config.instruments import US_EQUITIES, EU_EQUITIES, FX_PAIRS
+            all_instruments: dict = {**US_EQUITIES, **EU_EQUITIES, **FX_PAIRS}
+            try:
+                from config.instruments import ETFS
+                all_instruments.update(ETFS)
+            except (ImportError, AttributeError):
+                pass
+            try:
+                from config.instruments import COMMODITIES
+                all_instruments.update(COMMODITIES)
+            except (ImportError, AttributeError):
+                pass
 
-            all_instruments = {**US_EQUITIES, **EU_EQUITIES, **FX_PAIRS}
             instrument_id = all_instruments.get(symbol, {}).get("etoro_id")
+            if not instrument_id:
+                return None
 
-            if instrument_id:
-                df = await data_engine.get_ohlcv(instrument_id, symbol, "OneHour", 48)
-                if not df.empty:
-                    # Find closest timestamp
-                    target_ts = pd.Timestamp(target_time)
-                    idx = df.index.get_indexer([target_ts], method="nearest")[0]
-                    if 0 <= idx < len(df):
-                        return float(df.iloc[idx]["close"])
+            # Choose fetch size based on how far back target_time is
+            now_utc = datetime.utcnow()
+            target_age = (now_utc - target_time).total_seconds() / 3600  # hours
 
-            # Fallback: use daily data
-            df = await data_engine.get_ohlcv(instrument_id, symbol, "OneDay", 5)
-            if not df.empty:
-                target_date = pd.Timestamp(target_time.date())
-                if target_date in df.index:
-                    return float(df.loc[target_date, "close"])
-                # Use nearest available
-                idx = df.index.get_indexer([target_date], method="nearest")[0]
-                if 0 <= idx < len(df):
-                    return float(df.iloc[idx]["close"])
+            # Pick (period, count, tolerance_seconds) by horizon age
+            if target_age <= 48:
+                period, count, tol_sec = "OneHour", 96, 3600 * 2
+            elif target_age <= 24 * 30:
+                period, count, tol_sec = "OneHour", int(min(target_age, 720)) + 48, 3600 * 2
+            else:
+                # Old signal: switch to daily, fetch enough back
+                period, count, tol_sec = "OneDay", min(int(target_age // 24) + 5, 365), 86400 * 2
+
+            df = await data_engine.get_ohlcv(instrument_id, symbol, period, count)
+            if df is None or df.empty or "close" not in df.columns:
+                return None
+
+            # Align tz between target and df.index
+            target_ts = pd.Timestamp(target_time)
+            if isinstance(df.index, pd.DatetimeIndex):
+                if df.index.tz is not None and target_ts.tz is None:
+                    target_ts = target_ts.tz_localize("UTC").tz_convert(df.index.tz)
+                elif df.index.tz is None and target_ts.tz is not None:
+                    target_ts = target_ts.tz_localize(None)
+            else:
+                return None  # cannot align without DatetimeIndex
+
+            idx_arr = df.index.get_indexer([target_ts], method="nearest")
+            if len(idx_arr) == 0:
+                return None
+            idx = idx_arr[0]
+            if idx < 0 or idx >= len(df):
+                return None
+
+            # Reject if "nearest" is too far from target (data doesn't cover this range)
+            actual_ts = df.index[idx]
+            diff_sec = abs((actual_ts - target_ts).total_seconds())
+            if diff_sec > tol_sec:
+                return None
+
+            return float(df.iloc[idx]["close"])
 
         except Exception as e:
             logger.debug(f"Price lookup failed for {symbol} at {target_time}: {e}")

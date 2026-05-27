@@ -63,6 +63,7 @@ class DataEngine:
                 "close": "close", "volume": "volume", "timestamp": "date",
                 "Open": "open", "High": "high", "Low": "low",
                 "Close": "close", "Volume": "volume", "Timestamp": "date",
+                "fromDate": "date", "FromDate": "date",
             }
             df.rename(columns={k: v for k, v in col_map.items() if k in df.columns},
                        inplace=True)
