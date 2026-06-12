@@ -60,13 +60,27 @@ class AIDecision:
 # LLM Client wrapper
 # ---------------------------------------------------------------------------
 
+class _RefusalError(RuntimeError):
+    """Raised when a model declines a request (Fable 5 stop_reason=refusal).
+
+    Non-retryable: retrying the same prompt would just be refused again.
+    """
+
+
 _HAIKU_MODEL = "claude-haiku-4-5-20251001"
 _SONNET_MODEL = "claude-sonnet-4-6"
+# Fable 5 (released 2026-06-09, successor to Opus 4.8). Available but NOT wired
+# into any routing yet — ~3.3x Sonnet / ~10x Haiku on output. Reserve for
+# low-volume high-value calls (e.g. AutoResearch) if ever adopted.
+# NOTE: Fable 5 can return stop_reason="refusal" (HTTP 200); call()
+# handles that defensively below.
+_FABLE_MODEL = "claude-fable-5"
 
-# Pricing (USD per 1M tokens) — Claude haiku-4-5 / sonnet-4-6
+# Pricing (USD per 1M tokens)
 _PRICING = {
     _HAIKU_MODEL:  {"input": 1.00, "output": 5.00},
     _SONNET_MODEL: {"input": 3.00, "output": 15.00},
+    _FABLE_MODEL:  {"input": 10.00, "output": 50.00},
 }
 
 
@@ -176,7 +190,34 @@ class LLMClient:
                     messages=[{"role": "user", "content": user_prompt}],
                 )
 
-                text = response.content[0].text
+                # Fable 5 / Mythos 5 can decline a request: HTTP 200 with
+                # stop_reason="refusal" and no usable text block. Treat as a
+                # terminal non-retryable outcome — caller falls back to neutral.
+                # (Sonnet/Haiku never set this, so existing behaviour is unchanged.)
+                if getattr(response, "stop_reason", None) == "refusal":
+                    inp_tok = getattr(response.usage, "input_tokens", 0)
+                    out_tok = getattr(response.usage, "output_tokens", 0)
+                    self._log_cost(agent_name, model, ticker, inp_tok, out_tok,
+                                   inp_tok + out_tok, 0.0)
+                    self._today_tokens += inp_tok + out_tok
+                    logger.warning(
+                        "%s refused request for %s (model=%s) — returning neutral",
+                        agent_name, ticker or "?", model,
+                    )
+                    raise _RefusalError(f"{model} declined request for {ticker}")
+
+                # Extract the first text block defensively (a non-text block
+                # first would otherwise raise AttributeError and burn retries).
+                text = next(
+                    (b.text for b in response.content
+                     if getattr(b, "type", None) == "text" and getattr(b, "text", None)),
+                    None,
+                )
+                if text is None:
+                    raise RuntimeError(
+                        f"No text block in response (stop_reason="
+                        f"{getattr(response, 'stop_reason', '?')})"
+                    )
                 inp_tok = response.usage.input_tokens
                 out_tok = response.usage.output_tokens
                 total = inp_tok + out_tok
@@ -191,6 +232,10 @@ class LLMClient:
 
                 return text, total
 
+            except _RefusalError:
+                # Terminal: do not retry a refusal. Propagate so the caller's
+                # existing neutral-fallback path handles it.
+                raise
             except Exception as e:
                 last_err = e
                 if attempt < retries - 1:
