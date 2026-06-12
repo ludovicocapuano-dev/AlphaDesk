@@ -202,8 +202,14 @@ class OutcomeLabeler:
         Returns number of decisions labeled.
         """
         labeled_count = 0
+        # Writes are deferred to a short batch transaction at the end.
+        # Holding a write txn open across the network awaits below kept the
+        # SQLite writer lock for minutes per cycle and starved every other
+        # writer ("database is locked" on trade execution, AI cost logging).
+        pending_outcome: list = []   # (set_clauses_sql, values, signal_id)
+        pending_tb: list = []        # (label, exit_type, holding_bars, return_pct, id)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30) as conn:
             conn.row_factory = sqlite3.Row
 
             # Get unlabeled signals that are old enough for at least 15m outcome
@@ -265,17 +271,14 @@ class OutcomeLabeler:
                         updates[f"outcome_{horizon_name}_correct"] = is_correct
 
                     if updates:
-                        # Build UPDATE statement
+                        # Build UPDATE statement (deferred — no write lock here)
                         set_clauses = ", ".join(f"{k} = ?" for k in updates.keys())
                         values = list(updates.values())
 
                         if all_horizons_filled:
                             set_clauses += ", outcome_labeled = 1, ml_training_ready = 1"
 
-                        conn.execute(
-                            f"UPDATE signals SET {set_clauses} WHERE id = ?",
-                            values + [signal_id]
-                        )
+                        pending_outcome.append((set_clauses, values, signal_id))
                         labeled_count += 1
 
                 except Exception as e:
@@ -376,20 +379,30 @@ class OutcomeLabeler:
                         tb["label"] = -tb["label"]
                         tb["return_pct"] = -tb["return_pct"]
 
-                    conn.execute(
-                        """UPDATE signals
-                           SET tb_label = ?, tb_exit_type = ?,
-                               tb_holding_bars = ?, tb_return = ?
-                           WHERE id = ?""",
-                        (tb["label"], tb["exit_type"],
-                         tb["holding_bars"], tb["return_pct"],
-                         signal_id),
-                    )
+                    pending_tb.append((tb["label"], tb["exit_type"],
+                                       tb["holding_bars"], tb["return_pct"],
+                                       signal_id))
 
                 except Exception as e:
                     logger.error(f"Triple-barrier labeling error for signal {row['id']}: {e}")
 
-            conn.commit()
+        # ── Batch write: one short transaction, milliseconds of writer lock ──
+        if pending_outcome or pending_tb:
+            with sqlite3.connect(self.db_path, timeout=30) as wconn:
+                for set_clauses, values, signal_id in pending_outcome:
+                    wconn.execute(
+                        f"UPDATE signals SET {set_clauses} WHERE id = ?",
+                        values + [signal_id],
+                    )
+                if pending_tb:
+                    wconn.executemany(
+                        """UPDATE signals
+                           SET tb_label = ?, tb_exit_type = ?,
+                               tb_holding_bars = ?, tb_return = ?
+                           WHERE id = ?""",
+                        pending_tb,
+                    )
+                wconn.commit()
 
         if labeled_count > 0:
             logger.info(f"Labeled outcomes for {labeled_count} decisions")
