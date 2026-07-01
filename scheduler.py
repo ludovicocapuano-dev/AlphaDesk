@@ -227,9 +227,13 @@ class AlphaDeskScheduler:
         try:
             if self._news_radar is None:
                 from core.news_radar import NewsRadar
+                import os as _os
                 self._news_radar = NewsRadar(
                     notifier=self.desk.notifier,
                     db_path=config.db_path,
+                    # News Telegram alerts OFF by default (too noisy). Re-enable
+                    # with NEWS_TELEGRAM_ALERTS=true in .env. Scan always runs.
+                    alerts_enabled=_os.getenv("NEWS_TELEGRAM_ALERTS", "false").lower() == "true",
                 )
             report = await self._news_radar.scan()
             if report.get("critical", 0) > 0:

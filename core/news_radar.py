@@ -239,9 +239,13 @@ class NewsRadar:
     MAX_CONCURRENT = 5  # concurrent HTTP fetches
     ITEM_AGE_MAX_HOURS = 6  # ignore items older than this
 
-    def __init__(self, notifier=None, db_path: Optional[str] = None):
+    def __init__(self, notifier=None, db_path: Optional[str] = None,
+                 alerts_enabled: bool = True):
         self.notifier = notifier
         self.db_path = db_path
+        # When False, the scan still runs (feeds regime refresh + agent context
+        # via get_recent_events) but no Telegram push is sent for critical news.
+        self.alerts_enabled = alerts_enabled
         self._seen_hashes: Set[str] = set()
         self._load_state()
         self._ensure_db_schema()
@@ -461,6 +465,8 @@ class NewsRadar:
         alerted = 0
         sources_alerted: Set[str] = set()
         for item in critical:
+            if not self.alerts_enabled:
+                break  # News Telegram push disabled — scan still feeds regime/agents
             if alerted >= 3:
                 break
             if item.source in sources_alerted:

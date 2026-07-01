@@ -68,6 +68,17 @@ class DataEngine:
             df.rename(columns={k: v for k, v in col_map.items() if k in df.columns},
                        inplace=True)
 
+            # A frame without a usable 'close' is useless to every consumer
+            # (compute_indicators, regime_detector, strategies, labeler) and
+            # a non-empty malformed frame raises KeyError('close') downstream.
+            # Return empty so callers' `if df.empty` guards catch it uniformly.
+            if "close" not in df.columns:
+                logger.warning(
+                    f"OHLCV for {symbol}: no 'close' column (cols={list(df.columns)}) "
+                    "— returning empty"
+                )
+                return pd.DataFrame()
+
             if "date" in df.columns:
                 df["date"] = pd.to_datetime(df["date"])
                 df.set_index("date", inplace=True)
