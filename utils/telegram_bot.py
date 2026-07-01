@@ -86,6 +86,32 @@ class TelegramNotifier:
         )
         await self.send(msg)
 
+    async def notify_trade_open(self, signal, amount: float,
+                                ml_probability: float = None,
+                                ml_active: bool = False):
+        """Single merged push for an executed entry (signal + execution).
+
+        Replaces the old notify_signal + notify_trade_executed pair so each
+        executed trade produces exactly one message.
+        """
+        emoji = "🟢" if signal.signal.value > 0 else "🔴"
+        ml_line = (
+            f"🤖 ML: {ml_probability:.0%}\n"
+            if ml_active and ml_probability is not None else ""
+        )
+        msg = (
+            f"{emoji} <b>TRADE OPENED: {signal.signal.name}</b>\n"
+            f"📊 {signal.symbol} | {signal.strategy_name}\n"
+            f"💵 Size: ${amount:,.2f}\n"
+            f"💰 Entry: {signal.entry_price:.4f}\n"
+            f"🛑 Stop: {signal.stop_loss:.4f}\n"
+            f"🎯 Target: {signal.take_profit:.4f}\n"
+            f"📈 R:R = {signal.risk_reward_ratio:.2f} | 🔒 {signal.confidence:.0%}\n"
+            f"{ml_line}"
+            f"⏰ {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+        )
+        await self.send(msg)
+
     async def notify_risk_alert(self, alert_type: str, details: str):
         """Send a risk management alert."""
         msg = (

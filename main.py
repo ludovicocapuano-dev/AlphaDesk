@@ -47,6 +47,23 @@ from utils.telegram_bot import TelegramNotifier
 logger = logging.getLogger("alphadesk.main")
 
 
+# Exit reasons that warrant a real-time Telegram push (adverse closes only).
+# Normal exits (take profit, mean-reversion target, trend reversal) are
+# silenced and surface in the daily summary instead.
+_ADVERSE_EXIT_KEYWORDS = (
+    "stop", "hard stop", "drawdown", "circuit", "emergency",
+    "liquidat", "margin",
+)
+
+
+def _is_adverse_exit(reason: str) -> bool:
+    """True if an exit reason represents a loss-side / forced close."""
+    if not reason:
+        return False
+    r = reason.lower()
+    return any(k in r for k in _ADVERSE_EXIT_KEYWORDS)
+
+
 class AlphaDesk:
     """Main trading system orchestrator with self-learning ML ensemble."""
 
@@ -809,15 +826,14 @@ class AlphaDesk:
                     "take_profit": signal.take_profit,
                 })
 
-                # Notify
+                # Notify (single merged push: signal + execution)
                 ml_tag = f" | ML: {ml_result['ml_probability']:.0%}" if ml_result["ml_active"] else ""
-                await self.notifier.notify_signal(signal)
-                await self.notifier.notify_trade_executed({
-                    "symbol": signal.symbol,
-                    "direction": signal.direction,
-                    "amount": sizing["dollar_amount"],
-                    "ml_probability": ml_result["ml_probability"],
-                })
+                await self.notifier.notify_trade_open(
+                    signal,
+                    amount=sizing["dollar_amount"],
+                    ml_probability=ml_result["ml_probability"],
+                    ml_active=ml_result["ml_active"],
+                )
 
                 executed += 1
                 logger.info(
@@ -941,13 +957,16 @@ class AlphaDesk:
                         if pos_id:
                             self.db.close_position(str(pos_id))
 
-                        logger.info(
-                            f"🔴 EXIT: {symbol} | {exit_signal.metadata.get('exit_reason', '')}"
-                        )
-                        await self.notifier.notify_risk_alert(
-                            "Position Closed",
-                            f"{symbol}: {exit_signal.metadata.get('exit_reason', '')}"
-                        )
+                        exit_reason = exit_signal.metadata.get('exit_reason', '')
+                        logger.info(f"🔴 EXIT: {symbol} | {exit_reason}")
+                        # Only push adverse exits in real-time (SL / hard stop /
+                        # drawdown / circuit breaker). Normal exits (take profit,
+                        # mean-reversion target, trend reversal) go to daily summary.
+                        if _is_adverse_exit(exit_reason):
+                            await self.notifier.notify_risk_alert(
+                                "Position Closed (adverse)",
+                                f"{symbol}: {exit_reason}"
+                            )
 
                 except Exception as e:
                     logger.error(f"Exit check failed for {symbol}: {e}")
