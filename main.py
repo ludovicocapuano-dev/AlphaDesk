@@ -723,14 +723,32 @@ class AlphaDesk:
                 # Apply regime multiplier
                 sizing["dollar_amount"] *= size_multiplier
 
-                # ── Concentration cap: reject if size > max_position_pct_nav ──
+                # ── Concentration cap: reject if CUMULATIVE per-symbol exposure
+                #    (existing position + this order) > max_position_pct_nav.
+                #    Checking cumulative (not just this order) defends against
+                #    accumulation via repeated small entries — the root cause of
+                #    the paper book's PG/UNH over-concentration when the dedup
+                #    gate was silently failing on ID mismatch.
+                from config.instruments import get_instrument_id as _gid
                 cap_pct = self.risk_manager.config.max_position_pct_nav
                 equity = self.risk_manager.state.equity
-                size_pct = sizing["dollar_amount"] / equity if equity > 0 else 0
+                _sym_id = _gid(signal.symbol) or signal.instrument_id
+                existing_sym_exposure = 0.0
+                for p in (self.risk_manager.state.positions or []):
+                    if p.get("instrumentID") == _sym_id or p.get("instrumentId") == _sym_id:
+                        upnl = p.get("unrealizedPnL", {}) or {}
+                        existing_sym_exposure += abs(
+                            upnl.get("exposureInAccountCurrency")
+                            or p.get("amount", 0) or 0
+                        )
+                projected = existing_sym_exposure + sizing["dollar_amount"]
+                size_pct = projected / equity if equity > 0 else 0
                 if size_pct > cap_pct:
                     logger.warning(
-                        f"CONCENTRATION CAP: {signal.symbol} sized "
-                        f"${sizing['dollar_amount']:,.0f} = {size_pct:.1%} of NAV "
+                        f"CONCENTRATION CAP: {signal.symbol} projected "
+                        f"${projected:,.0f} ("
+                        f"existing ${existing_sym_exposure:,.0f} + new "
+                        f"${sizing['dollar_amount']:,.0f}) = {size_pct:.1%} of NAV "
                         f"> {cap_pct:.0%} cap — rejected (autonomous)"
                     )
                     self._log_signal_with_features(signal, ml_result, regime_data, executed=False)
