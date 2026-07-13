@@ -545,13 +545,22 @@ class OutcomeLabeler:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-            # Parse feature vector
+            # Parse feature vector. Two on-disk formats coexist:
+            #   - list  (main.py path): ml_result["feature_vector"] is a 20/23-dim
+            #     array → index as feat_0, feat_1, …
+            #   - dict  (ml_bootstrap path): named features → feat_<name>
             try:
                 features = json.loads(row.get("feature_vector", "{}") or "{}")
-                for k, v in features.items():
-                    if isinstance(v, (int, float)):
+                if isinstance(features, dict):
+                    items = features.items()
+                elif isinstance(features, (list, tuple)):
+                    items = enumerate(features)
+                else:
+                    items = []
+                for k, v in items:
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
                         flat[f"feat_{k}"] = v
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError, AttributeError):
                 pass
 
             expanded_rows.append(flat)
