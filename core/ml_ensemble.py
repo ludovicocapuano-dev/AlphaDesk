@@ -457,9 +457,31 @@ class MLEnsemble:
             shadow = AlphaNet(input_dim=FeaturePipeline.FEATURE_DIM)
             train_metrics = self._train_model(shadow, X_train, y_train, X_val, y_val)
 
-            # Evaluate shadow vs production
+            # Evaluate shadow vs production ON THE SAME current val set.
+            # Using production's stored accuracy (measured on its OWN training
+            # era) against the shadow's current-data accuracy is apples-to-
+            # oranges and blocks every promotion — a stale model looks
+            # unbeatable. Re-score production on today's held-out set instead.
             shadow_acc = train_metrics["val_accuracy"]
             production_acc = self.training_accuracy
+            if self.production_model is not None and HAS_TORCH and len(X_val) > 0:
+                try:
+                    self.production_model.eval()
+                    with torch.no_grad():
+                        pv = self.production_model(
+                            torch.FloatTensor(X_val)
+                        ).numpy().ravel()
+                    production_acc = float(
+                        ((pv > 0.5).astype(np.float32) == y_val).mean()
+                    )
+                    logger.info(
+                        f"Production re-scored on current val: {production_acc:.1%} "
+                        f"(stored/stale was {self.training_accuracy:.1%})"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Production re-eval failed ({e}) — using stored accuracy"
+                    )
 
             promote = False
             if self.production_model is None:
