@@ -547,6 +547,10 @@ class MLEnsemble:
                 all_features.append(feat)
 
             X = np.array(all_features, dtype=np.float32)
+            # Sanitize BEFORE stats: NaN/inf here poison mean/std and cascade
+            # to every normalized row. Note `x or default` above does NOT catch
+            # NaN (NaN is truthy in Python), so raw NaN can reach here.
+            X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
             # Labels: 1 if 1h outcome was profitable, 0 otherwise
             y = (df["label"].fillna(0).astype(float) > 0).astype(np.float32).values
@@ -555,8 +559,14 @@ class MLEnsemble:
             for feat in X:
                 self.feature_pipeline.update_stats(feat)
 
-            # Normalize
+            # Normalize, then sanitize again: zero-variance features make
+            # normalize() divide by ~0 → NaN/inf. Unclean input to BCELoss
+            # raises "all elements of input should be between 0 and 1" and
+            # aborts every nightly retrain (model stuck since 2026-03-20).
             X_normalized = np.array([self.feature_pipeline.normalize(f) for f in X])
+            X_normalized = np.nan_to_num(
+                X_normalized, nan=0.0, posinf=0.0, neginf=0.0
+            ).astype(np.float32)
 
             return X_normalized, y
 
