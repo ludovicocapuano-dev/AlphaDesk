@@ -510,12 +510,30 @@ class MLEnsemble:
                            "outcome_15m_pnl", "outcome_1h_pnl",
                            "outcome_4h_pnl", "outcome_24h_pnl"]
 
-            # Build feature matrix from available columns
+            # TRAIN/SERVE PARITY: predict() feeds the model the full 23-dim
+            # vector from FeaturePipeline.extract_features() and logs it raw as
+            # feature_vector (→ feat_0..feat_22 after _expand_features). Training
+            # MUST use that same vector, not a partial reconstruction from named
+            # columns, or the model learns on features it never sees at inference.
+            # The bulk of rows (list-format feature_vector) expand to feat_0..N;
+            # older dict-format rows lack them and fall back to the named build.
+            fv_cols = [f"feat_{i}" for i in range(FeaturePipeline.FEATURE_DIM)]
+            has_vector = all(c in df.columns for c in fv_cols)
+
             all_features = []
             for _, row in df.iterrows():
-                feat = np.zeros(FeaturePipeline.FEATURE_DIM)
+                # Prefer the logged raw feature vector (train/serve parity)
+                if has_vector and pd.notna(row.get("feat_0")):
+                    feat = np.zeros(FeaturePipeline.FEATURE_DIM)
+                    for i in range(FeaturePipeline.FEATURE_DIM):
+                        v = row.get(f"feat_{i}")
+                        if v is not None and not (isinstance(v, float) and np.isnan(v)):
+                            feat[i] = v
+                    all_features.append(feat)
+                    continue
 
-                # Fill from available data
+                # Fallback: legacy dict-format rows — reconstruct from named cols
+                feat = np.zeros(FeaturePipeline.FEATURE_DIM)
                 feat[4] = row.get("confidence", 0.5) or 0.5
                 rr = row.get("risk_reward_ratio", 1.0) or 1.0
                 feat[5] = min(rr, 5.0) / 5.0
