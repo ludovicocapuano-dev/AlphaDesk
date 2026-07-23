@@ -9,6 +9,7 @@ contracts (Stock/Forex/ETF) so the rest of AlphaDesk doesn't need changes.
 
 import asyncio
 import logging
+from collections import deque
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -143,6 +144,40 @@ class IBKRClient:
     works without modification. Uses ib_insync which wraps the raw TWS API.
     """
 
+    # ── Historical-data pacing (IBKR: max 60 requests / 10 min, per account) ──
+    # Shared across all client instances since the limit is account-wide.
+    # We cap at 50/600s with a 1.2s min spacing; combined with DataEngine's
+    # 10-min OHLCV cache this keeps us clear of Error 162 "query cancelled".
+    _HIST_WINDOW_SEC = 600
+    _HIST_MAX_IN_WINDOW = 50
+    _HIST_MIN_SPACING_SEC = 1.2
+    _hist_req_times: "deque" = deque()
+    _hist_throttle_lock: Optional[asyncio.Lock] = None
+
+    @classmethod
+    async def _throttle_historical(cls):
+        """Block until issuing another historical request respects IBKR pacing."""
+        import time as _t
+        if cls._hist_throttle_lock is None:
+            cls._hist_throttle_lock = asyncio.Lock()
+        async with cls._hist_throttle_lock:
+            now = _t.monotonic()
+            while cls._hist_req_times and now - cls._hist_req_times[0] > cls._HIST_WINDOW_SEC:
+                cls._hist_req_times.popleft()
+            if len(cls._hist_req_times) >= cls._HIST_MAX_IN_WINDOW:
+                wait = cls._HIST_WINDOW_SEC - (now - cls._hist_req_times[0]) + 0.1
+                if wait > 0:
+                    logger.warning(f"Historical pacing: window full, waiting {wait:.0f}s")
+                    await asyncio.sleep(wait)
+                    now = _t.monotonic()
+                    while cls._hist_req_times and now - cls._hist_req_times[0] > cls._HIST_WINDOW_SEC:
+                        cls._hist_req_times.popleft()
+            if cls._hist_req_times:
+                since_last = now - cls._hist_req_times[-1]
+                if since_last < cls._HIST_MIN_SPACING_SEC:
+                    await asyncio.sleep(cls._HIST_MIN_SPACING_SEC - since_last)
+            cls._hist_req_times.append(_t.monotonic())
+
     def __init__(self, host: str = "127.0.0.1", port: int = 4002,
                  client_id: int = 1, timeout: int = 30,
                  max_retries: int = 3):
@@ -270,6 +305,7 @@ class IBKRClient:
 
         try:
             ib = await self._ensure_connected()
+            await self._throttle_historical()  # respect IBKR pacing (Error 162)
             bars = await ib.reqHistoricalDataAsync(
                 contract,
                 endDateTime="",
